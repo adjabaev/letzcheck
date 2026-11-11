@@ -1,0 +1,21 @@
+[package]
+name = "letzcheck"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+description = "Rule-based Luxembourgish checker built on the LOD open data, compiled to WebAssembly"
+license = "MPL-2.0"
+repository = "https://github.com/adjabaev/letzcheck"
+keywords = ["luxembourgish", "grammar", "spellcheck", "wasm", "language-learning"]
+categories = ["text-processing", "wasm"]
+
+[lib]
+name = "letz"
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

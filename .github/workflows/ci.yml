@@ -1,0 +1,55 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --release --target wasm32-unknown-unknown -- -D warnings
+
+      # The LOD release and the spellchecker.lu package are pinned in the fetch scripts, so the
+      # downloads are cached on those files.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            data/lod
+            data/spell
+          key: data-${{ hashFiles('tools/fetch_lod.py', 'tools/fetch_spell.py', 'Makefile') }}
+      - name: Data
+        run: make data
+      - name: Cases
+        run: make test
+      # src/spell.rs against the real hunspell, on corpus words, dictionary words and typos.
+      - name: Speller against hunspell
+        run: |
+          sudo apt-get install -y -q hunspell
+          make spell
+
+      # Builds the engine as it was before this change and fails on any remark it did not make
+      # on the corpus of correct sentences.
+      - name: Corpus against the base build
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then BASE=${{ github.event.pull_request.base.sha }}; else BASE=${{ github.event.before }}; fi
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then echo "no base commit, skipping"; exit 0; fi
+          git worktree add -q ../base "$BASE"
+          # The base build gets its own data file, built from the same downloads: the format may differ.
+          mkdir -p ../base/data && cp -r data/lod ../base/data/ && cp -r data/spell ../base/data/
+          (cd ../base && make data/lod.txt wasm)
+          node test/corpus.mjs "../base/dist/letz.wasm@../base/data/lod.txt" dist/letz.wasm data/lod.txt data/corpus.txt --strict
