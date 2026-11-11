@@ -127,7 +127,8 @@ analyze(ptr, len) -> out             UTF-8 text in, JSON out
 describe(wi), gloss(wi, lang), nfull(wi), clitic(wi) -> out; level(wi) -> i32
                                      about word wi of the latest analyze(); clitic() gives the
                                      clitic itself ("s", "d'", "z'", "'t", "'n", "'s") or ""
-                                     gloss(wi, lang): the LOD translation, 0 French, 1 English
+                                     gloss(wi, lang): the LOD translation, 0 French, 1 English,
+                                     2 German, 3 Portuguese
 suggest(ptr, len, max) -> out, version() -> out, entries() -> i32, fold(ptr, len) -> out
 spell(ptr, len) -> i32               1 if the spellchecker.lu dictionary accepts the word
 number(wi) -> out                    the value of word wi when it is a number in words ("1815"), or ""
@@ -172,13 +173,13 @@ string means "none"):
 | spelling | `accent_variant` | word, accented, source | the same letters with other accents are a known word |
 | spelling | `unknown_word` | word, close?, close_source? | unknown; the fixes may be empty |
 | spelling | `unknown_capitalised` | word, close?, close_source? | unknown, capitalised mid-sentence, with close words |
-| compound | `compound` | word, first, first_fr, first_en, second, second_fr, second_en | looks like first + second (with their LOD translations) |
+| compound | `compound` | word, first, first_fr/en/de/pt, second, second_fr/en/de/pt | looks like first + second (with their LOD translations) |
 | unlisted | `unlisted_attested` | word | no entry, but used in LOD examples |
 | spelling | `number_spelling` | word, expected, value | a number in words with wrong accents (*uechtzenghonnert…* → *uechtzénghonnert…*, 1815) |
 | spelling | `number_split` | word, expected, value | millions written together: *Millioun(en)* stands apart |
 | proper_noun | `proper_noun` | word, close?, close_source? | unknown, capitalised: maybe a name |
-| capital | `capital_unexpected` | word, lower, gloss_fr, gloss_en | the LOD has it in lower case only |
-| capital | `capital_missing` | noun, gloss_fr, gloss_en | a noun written in lower case |
+| capital | `capital_unexpected` | word, lower, gloss_fr/en/de/pt | the LOD has it in lower case only |
+| capital | `capital_missing` | noun, gloss_fr/en/de/pt | a noun written in lower case |
 | capital | `capital_start` | fixed | a sentence starting in lower case |
 | n_rule | `n_keep` | next, before (`n` `d` `t` `z` `h` or `vowel`), full | the n must stay |
 | n_rule | `n_end` | full | the n must stay at the end of a sentence |

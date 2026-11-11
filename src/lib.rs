@@ -52,14 +52,18 @@ type Map<K, V> = HashMap<K, V, BuildHasherDefault<FnvHasher>>;
 type Set<K> = HashSet<K, BuildHasherDefault<FnvHasher>>;
 type StaticStr = &'static str;
 
+/// The languages of the LOD translations kept, in the order of Entry::translations and of the
+/// `lang` argument of gloss().
+const LANGUAGES: [&str; 4] = ["fr", "en", "de", "pt"];
+
 struct Entry {
     id: StaticStr,
     lemma: StaticStr,
     part_of_speech: StaticStr,
     gender: StaticStr,
     level: u8,
-    fr: StaticStr,
-    en: StaticStr,
+    /// The LOD translations, "; "-separated, in the order of LANGUAGES.
+    translations: [StaticStr; 4],
     plural: StaticStr,
     /// For a word starting with Y, how the Y sounds: b'j' (consonant, as in Yoga), b'v' (vowel,
     /// as in Yttrium), 0 when unknown or not a Y word. From the LOD pronunciation.
@@ -448,7 +452,7 @@ fn build_determiners() -> HashMap<String, Determiner> {
 fn load_dictionary(text: StaticStr) -> Result<Dictionary, i32> {
     let mut lines = text.split('\n');
     let head: Vec<StaticStr> = lines.next().ok_or(2)?.split('\t').collect();
-    if head.len() != 10 || head[0] != "LETZ2" {
+    if head.len() != 10 || head[0] != "LETZ3" {
         return Err(2);
     }
     let count = |field: usize| head[field].parse::<usize>().map_err(|_| 2);
@@ -458,7 +462,7 @@ fn load_dictionary(text: StaticStr) -> Result<Dictionary, i32> {
     let mut entries = Vec::with_capacity(entry_count);
     for _ in 0..entry_count {
         let fields: Vec<StaticStr> = lines.next().ok_or(3)?.split('\t').collect();
-        if fields.len() != 9 {
+        if fields.len() != 11 {
             return Err(3);
         }
         entries.push(Entry {
@@ -467,8 +471,7 @@ fn load_dictionary(text: StaticStr) -> Result<Dictionary, i32> {
             part_of_speech: fields[2],
             gender: fields[3],
             level: fields[4].parse().map_err(|_| 3)?,
-            fr: fields[5],
-            en: fields[6],
+            translations: [fields[5], fields[6], fields[9], fields[10]],
             plural: fields[7],
             y_onset: match fields[8] {
                 "j" => b'j',
@@ -609,15 +612,10 @@ impl Dictionary {
         }
         list
     }
-    fn gloss(&self, record: Option<FormRecord>, english: bool) -> &'static str {
+    /// The first translation of the word's main entry, in LANGUAGES[language].
+    fn gloss(&self, record: Option<FormRecord>, language: usize) -> &'static str {
         let indices = self.entry_indices(record);
-        let translation = |i: usize| {
-            if english {
-                self.entries[i].en
-            } else {
-                self.entries[i].fr
-            }
-        };
+        let translation = |i: usize| self.entries[i].translations[language];
         for pass in 0..2 {
             for &i in &indices {
                 if (self.entries[i].part_of_speech == "ART") != (pass == 0) {
@@ -1691,6 +1689,34 @@ fn params(pairs: &[(&'static str, &str)]) -> Vec<(&'static str, String)> {
         .collect()
 }
 
+/// Parameter names of the translations of a word, in the order of LANGUAGES.
+const GLOSSES: [&str; 4] = ["gloss_fr", "gloss_en", "gloss_de", "gloss_pt"];
+const FIRST_GLOSSES: [&str; 4] = ["first_fr", "first_en", "first_de", "first_pt"];
+const SECOND_GLOSSES: [&str; 4] = ["second_fr", "second_en", "second_de", "second_pt"];
+
+/// Adds the word's LOD translation in every language, under `names`.
+fn add_glosses(
+    dictionary: &Dictionary,
+    values: &mut Vec<(&'static str, String)>,
+    names: &[&'static str; 4],
+    record: Option<FormRecord>,
+) {
+    for (language, name) in names.iter().enumerate() {
+        values.push((name, dictionary.gloss(record, language).to_string()));
+    }
+}
+
+/// params() followed by gloss_fr, gloss_en, gloss_de, gloss_pt.
+fn glossed(
+    dictionary: &Dictionary,
+    pairs: &[(&'static str, &str)],
+    record: Option<FormRecord>,
+) -> Vec<(&'static str, String)> {
+    let mut values = params(pairs);
+    add_glosses(dictionary, &mut values, &GLOSSES, record);
+    values
+}
+
 /// Removes the n-rule remark on a word, when another remark replaces the whole word anyway.
 fn drop_n_rule(issues: &mut Vec<Issue>, word_index: usize) {
     issues.retain(|issue| !(issue.word_index == word_index && issue.category == category::N_RULE));
@@ -2046,20 +2072,19 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
             let Some((first, first_record, second, second_record)) = &word.compound else {
                 return;
             };
-            let gloss = |record: &FormRecord, english| dictionary.gloss(Some(*record), english);
+            let mut values = params(&[("word", text), ("first", first), ("second", second)]);
+            add_glosses(dictionary, &mut values, &FIRST_GLOSSES, Some(*first_record));
+            add_glosses(
+                dictionary,
+                &mut values,
+                &SECOND_GLOSSES,
+                Some(*second_record),
+            );
             add(
                 Severity::Warning,
                 category::COMPOUND,
                 "compound",
-                params(&[
-                    ("word", text),
-                    ("first", first),
-                    ("first_fr", gloss(first_record, false)),
-                    ("first_en", gloss(first_record, true)),
-                    ("second", second),
-                    ("second_fr", gloss(second_record, false)),
-                    ("second_en", gloss(second_record, true)),
-                ]),
+                values,
                 dictionary.suggest_spelling(&word.normalized, 3),
             );
         }
@@ -2113,8 +2138,6 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
         }
         Status::Case => {
             let form = word.form.as_str();
-            let gloss_fr = dictionary.gloss(word.record, false);
-            let gloss_en = dictionary.gloss(word.record, true);
             if starts_upper(text) {
                 // A capital the LOD does not have: the lower-case word, then capitalised neighbours.
                 let mut fixes = vec![form.to_string()];
@@ -2129,12 +2152,7 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                     Severity::Warning,
                     category::CAPITAL,
                     "capital_unexpected",
-                    params(&[
-                        ("word", text),
-                        ("lower", form),
-                        ("gloss_fr", gloss_fr),
-                        ("gloss_en", gloss_en),
-                    ]),
+                    glossed(dictionary, &[("word", text), ("lower", form)], word.record),
                     fixes,
                 );
             } else {
@@ -2143,11 +2161,7 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                     Severity::Warning,
                     category::CAPITAL,
                     "capital_missing",
-                    params(&[
-                        ("noun", form),
-                        ("gloss_fr", gloss_fr),
-                        ("gloss_en", gloss_en),
-                    ]),
+                    glossed(dictionary, &[("noun", form)], word.record),
                     vec![form.to_string()],
                 );
             }
@@ -3132,10 +3146,12 @@ fn describe_word(dictionary: &Dictionary, word: &Word) -> String {
             push_json_string(&mut out, entry.gender);
             out.push_str(",\"lvl\":");
             push_number(&mut out, entry.level as usize);
-            out.push_str(",\"fr\":");
-            push_json_string(&mut out, entry.fr);
-            out.push_str(",\"en\":");
-            push_json_string(&mut out, entry.en);
+            for (language, text) in LANGUAGES.iter().zip(entry.translations) {
+                out.push_str(",\"");
+                out.push_str(language);
+                out.push_str("\":");
+                push_json_string(&mut out, text);
+            }
             out.push_str(",\"plural\":");
             push_json_string(&mut out, entry.plural);
             out.push_str(",\"conj\":");
@@ -3275,12 +3291,12 @@ pub extern "C" fn describe(word_index: u32) -> *const u8 {
     }
 }
 
-/// Plain text (not JSON). lang: 0 = French, 1 = English.
+/// Plain text (not JSON). lang: 0 = French, 1 = English, 2 = German, 3 = Portuguese.
 #[no_mangle]
 pub extern "C" fn gloss(word_index: u32, lang: u32) -> *const u8 {
     match (dictionary(), last_word(word_index)) {
         (Some(loaded), Some(word)) if word.record.is_some() => {
-            output(loaded.gloss(word.record, lang == 1))
+            output(loaded.gloss(word.record, (lang as usize).min(LANGUAGES.len() - 1)))
         }
         _ => output(""),
     }

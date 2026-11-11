@@ -15,7 +15,7 @@ def clean(t): return re.sub(r"\s+", " ", (t or "")).strip()
 info = {}
 for ev, el in ET.iterparse(D + "art/new_lod-art.xml"):
     if el.tag != "entry": continue
-    plural, tr = [], {"fr": [], "en": [], "de": []}
+    plural, tr = [], {"fr": [], "en": [], "de": [], "pt": []}
     ms = el.find("microStructure")
     if ms is not None:
         for inf in ms.findall("inflection"):
@@ -66,9 +66,10 @@ for ev, el in ET.iterparse(D + "search/new_lod-search.xml"):
     gen = (p.get("gen") or "") if p is not None else ""
     cats = {c.text for c in el.findall("categories/category")}
     lvl = 1 if cats & {"A1", "GWS A1"} else 2 if cats & {"A2", "GWS A2"} else 0
-    plural, tr, ipa = info.get(eid, ([], {"fr": [], "en": [], "de": []}, ""))
+    plural, tr, ipa = info.get(eid, ([], {"fr": [], "en": [], "de": [], "pt": []}, ""))
     i = len(entries); eidx[eid] = i
-    entries.append([eid, lemma, pos, gen, lvl, "; ".join(tr["fr"]), "; ".join(tr["en"]), ", ".join(plural), y_onset(lemma, ipa)])
+    entries.append([eid, lemma, pos, gen, lvl, "; ".join(tr["fr"]), "; ".join(tr["en"]), ", ".join(plural), y_onset(lemma, ipa),
+                    "; ".join(tr["de"]), "; ".join(tr["pt"])])
     sp = [(clean(s.text).replace("’", "'"), s.get("reason")) for s in el.findall("spellings/spelling")]
     single = [(t, r) for t, r in sp if t and " " not in t and WORD.match(t)]
     valid = {t for t, r in single if r in VALID}

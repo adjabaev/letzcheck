@@ -6,9 +6,10 @@
 // Usage: node tools/convert.mjs data/lod.json data/lod.txt [data/spell]
 //
 // Layout (all lines end with \n, fields are tab-separated):
-//   LETZ2 <version> <nE> <nF> <nA> <nP> <nC> <nS> <nD> <spellVersion>
-//   nE lines  id lemma pos gender level fr en plural yOnset   (entry index = line order;
-//             yOnset: "j" or "v" for a word starting with Y pronounced [j] or as a vowel)
+//   LETZ3 <version> <nE> <nF> <nA> <nP> <nC> <nS> <nD> <spellVersion>
+//   nE lines  id lemma pos gender level fr en plural yOnset de pt   (entry index = line order;
+//             yOnset: "j" or "v" for a word starting with Y pronounced [j] or as a vowel;
+//             fr en de pt: the LOD translations, "; "-separated)
 //   nF lines  form ids nfull flag                          (unchanged from lod.json "f")
 //   nA lines  attested word                                (unchanged from "a")
 //   nP lines  form mask[w]                                 (unchanged from "p")
@@ -29,11 +30,11 @@ const clean = (s, what) => { if (typeof s !== 'string' || /[\t\n\r]/.test(s)) fa
 
 if (typeof d.v !== 'string' || /\s/.test(d.v)) fail('bad version');
 const E = d.e.map((e, i) => {
-  if (!Array.isArray(e) || e.length !== 9) fail('entry ' + i + ' is not 9 fields');
+  if (!Array.isArray(e) || e.length !== 11) fail('entry ' + i + ' is not 11 fields');
   if (!/^[jv]?$/.test(e[8])) fail('entry ' + i + ' y onset ' + e[8]);
   if (!Number.isInteger(e[4]) || e[4] < 0 || e[4] > 9) fail('entry ' + i + ' level');
   if (!/^[MFN]*$/.test(e[3])) fail('entry ' + i + ' gender ' + e[3]);
-  return [0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => (k === 4 ? String(e[4]) : clean(e[k], 'entry ' + i))).join('\t');
+  return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((k) => (k === 4 ? String(e[4]) : clean(e[k], 'entry ' + i))).join('\t');
 });
 const F = d.f.split('\n');
 const seen = new Set();
@@ -87,7 +88,7 @@ if (spellDir && existsSync(spellDir + '/lb_LU.aff')) {
   }
 }
 
-const head = ['LETZ2', d.v, E.length, F.length, A.length, P.length, C.length, S.length, D.length, spellVersion].join('\t');
+const head = ['LETZ3', d.v, E.length, F.length, A.length, P.length, C.length, S.length, D.length, spellVersion].join('\t');
 const txt = [head, ...E, ...F, ...A, ...P, ...C, ...S, ...D].join('\n') + '\n';
 writeFileSync(dest, txt);
 console.log(`${dest}: ${Buffer.byteLength(txt)} bytes, version ${d.v}, ${E.length} entries, ${F.length} forms, ${A.length} attested, ${P.length} person masks, ${C.length} conjugations, spellchecker.lu ${spellVersion}: ${S.length} affix lines, ${D.length} words`);
