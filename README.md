@@ -130,6 +130,7 @@ describe(wi), gloss(wi, lang), nfull(wi), clitic(wi) -> out; level(wi) -> i32
                                      gloss(wi, lang): the LOD translation, 0 French, 1 English
 suggest(ptr, len, max) -> out, version() -> out, entries() -> i32, fold(ptr, len) -> out
 spell(ptr, len) -> i32               1 if the spellchecker.lu dictionary accepts the word
+number(wi) -> out                    the value of word wi when it is a number in words ("1815"), or ""
 ```
 
 `out` is a pointer to a u32 little-endian length followed by UTF-8, valid until the next call.
@@ -147,7 +148,8 @@ spell(ptr, len) -> i32               1 if the spellchecker.lu dictionary accepts
 - `w`: per word, `[status, flags, severity, normalised form?]`. Status: 0 in the LOD, 1 in the LOD
   with another case, 2 known misspelling, 3 compound, 4 seen in LOD examples, 5 capitalised and
   unknown, 6 unknown, 7 not in the LOD but spelt right according to spellchecker.lu, 8 a number
-  written in words (`aachtdausendzweehonnertzweeasechzeg`).
+  written in words (`aachtdausendzweehonnertzweeasechzeg`), 9 a number written in words to fix
+  (accents, or millions written together).
 - `i`: the remarks, as `[word index, severity, category, rule, params, fixes, end?]`. The category
   and the rule are stable keys, the params an object of strings (see below). The optional `end` is
   the UTF-16 offset where the fix stops when it spans more than the word (`zu dem` → `zum`). An empty
@@ -172,6 +174,8 @@ string means "none"):
 | spelling | `unknown_capitalised` | word, close?, close_source? | unknown, capitalised mid-sentence, with close words |
 | compound | `compound` | word, first, first_fr, first_en, second, second_fr, second_en | looks like first + second (with their LOD translations) |
 | unlisted | `unlisted_attested` | word | no entry, but used in LOD examples |
+| spelling | `number_spelling` | word, expected, value | a number in words with wrong accents (*uechtzenghonnert…* → *uechtzénghonnert…*, 1815) |
+| spelling | `number_split` | word, expected, value | millions written together: *Millioun(en)* stands apart |
 | proper_noun | `proper_noun` | word, close?, close_source? | unknown, capitalised: maybe a name |
 | capital | `capital_unexpected` | word, lower, gloss_fr, gloss_en | the LOD has it in lower case only |
 | capital | `capital_missing` | noun, gloss_fr, gloss_en | a noun written in lower case |

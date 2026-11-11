@@ -20,6 +20,7 @@
 //!       about word `wi` of the most recent analyze() call
 //!   suggest(ptr, len, max) -> out, fold(ptr, len) -> out, version() -> out
 //!   spell(ptr, len) -> i32              1 if the spellchecker.lu dictionary accepts the word
+//!   number(wi) -> out                   value of word wi if it is a number in words, as plain text
 //! `out` points to a u32 little-endian byte length followed by UTF-8 (JSON unless noted),
 //! valid until the next call.
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -1155,80 +1156,226 @@ fn normalize_apostrophes(chars: &[char]) -> String {
 }
 
 // ---------- numbers in words ----------
-// Luxembourgish writes a number in one word: "néngavéierzeg" (9 + a + 40),
-// "honnertsiwwenzéngdausendsechshonnertnéngavéierzeg" (117,649). The LOD lists the pieces (and a
-// few compounds such as "eenanzwanzeg") but cannot list every number, so the pieces are written
-// out here; every one of them is a LOD form.
-const NUMBER_UNITS: [&str; 10] = [
-    "een", "eent", "zwee", "dräi", "véier", "fënnef", "sechs", "siwen", "aacht", "néng",
+// Luxembourgish writes a number below a million in one word: "néngavéierzeg" (9 + a + 40),
+// "honnertsiwwenzéngdausendsechshonnertnéngavéierzeg" (117,649), years as hundreds
+// ("uechtzénghonnertfofzéng", 1815). Millioun / Milliounen is a noun and stands apart
+// ("honnertdräianzwanzeg Milliounen …"). The LOD lists the pieces (and a few compounds such as
+// "eenanzwanzeg") but cannot list every number, so the pieces are written out here; every one of
+// them is a LOD form.
+const NUMBER_UNITS: [(&str, u64); 10] = [
+    ("een", 1),
+    ("eent", 1),
+    ("zwee", 2),
+    ("dräi", 3),
+    ("véier", 4),
+    ("fënnef", 5),
+    ("sechs", 6),
+    ("siwen", 7),
+    ("aacht", 8),
+    ("néng", 9),
 ];
-const NUMBER_TEENS: [&str; 10] = [
-    "zéng",
-    "eelef",
-    "zwielef",
-    "dräizéng",
-    "véierzéng",
-    "fofzéng",
-    "siechzéng",
-    "siwwenzéng",
-    "uechtzéng",
-    "nonzéng",
+const NUMBER_TEENS: [(&str, u64); 10] = [
+    ("zéng", 10),
+    ("eelef", 11),
+    ("zwielef", 12),
+    ("dräizéng", 13),
+    ("véierzéng", 14),
+    ("fofzéng", 15),
+    ("siechzéng", 16),
+    ("siwwenzéng", 17),
+    ("uechtzéng", 18),
+    ("nonzéng", 19),
 ];
-const NUMBER_TENS: [&str; 10] = [
-    "zwanzeg",
-    "drësseg",
-    "véierzeg",
-    "fofzeg",
-    "sechzeg",
-    "siechzeg",
-    "siwwenzeg",
-    "achtzeg",
-    "uechtzeg",
-    "nonzeg",
+const NUMBER_TENS: [(&str, u64); 10] = [
+    ("zwanzeg", 20),
+    ("drësseg", 30),
+    ("véierzeg", 40),
+    ("fofzeg", 50),
+    ("sechzeg", 60),
+    ("siechzeg", 60),
+    ("siwwenzeg", 70),
+    ("achtzeg", 80),
+    ("uechtzeg", 80),
+    ("nonzeg", 90),
 ];
 
-/// 1 to 99: a unit, a teen, a ten, or unit + "a"/"an" + ten ("zweeasechzeg", "eenanzwanzeg").
-/// Both linking forms are accepted: their choice follows the n-rule, which is not checked here.
-fn is_below_hundred(word: &str) -> bool {
-    if NUMBER_UNITS.contains(&word) || NUMBER_TEENS.contains(&word) || NUMBER_TENS.contains(&word) {
-        return true;
-    }
-    NUMBER_UNITS.iter().any(|unit| {
-        word.strip_prefix(unit).is_some_and(|rest| {
-            ["an", "a"].iter().any(|link| {
-                rest.strip_prefix(link)
-                    .is_some_and(|ten| NUMBER_TENS.contains(&ten))
-            })
+/// Misspellings of a piece that are common enough to read anyway, with the right piece:
+/// "aachtzeg" for "achtzeg" (80), by analogy with "aacht" (8).
+const NUMBER_MISSPELLINGS: [(&str, &str); 1] = [("aachtzeg", "achtzeg")];
+
+/// A number read from a word: its value and its spelling with the right accents.
+struct NumberReading {
+    value: u64,
+    spelling: String,
+}
+
+/// Lower case without accents, to read a number whatever its accents ("uechtzeng").
+fn fold_number(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'ä' | 'à' | 'â' => 'a',
+            'ö' | 'ô' => 'o',
+            'ü' | 'û' => 'u',
+            'î' | 'ï' => 'i',
+            _ => c,
         })
+        .collect()
+}
+
+/// `text` (folded) is exactly one of the pieces: its value and spelling.
+fn number_piece(text: &str, pieces: &[(&'static str, u64)]) -> Option<NumberReading> {
+    let text = NUMBER_MISSPELLINGS
+        .iter()
+        .find(|(wrong, _)| *wrong == text)
+        .map_or(text, |&(_, right)| right);
+    pieces
+        .iter()
+        .find(|(piece, _)| fold_number(piece) == text)
+        .map(|&(piece, value)| NumberReading {
+            value,
+            spelling: piece.to_string(),
+        })
+}
+
+/// 1 to 99: a unit, a teen, a ten, or unit + "a"/"an" + ten ("zweeasechzeg", "eenanzwanzeg").
+/// Both linking forms are read: their choice follows the n-rule, which is not checked here.
+fn number_below_hundred(text: &str) -> Option<NumberReading> {
+    if let Some(found) = number_piece(text, &NUMBER_UNITS)
+        .or_else(|| number_piece(text, &NUMBER_TEENS))
+        .or_else(|| number_piece(text, &NUMBER_TENS))
+    {
+        return Some(found);
+    }
+    for &(unit, unit_value) in &NUMBER_UNITS {
+        let Some(rest) = text.strip_prefix(fold_number(unit).as_str()) else {
+            continue;
+        };
+        for link in ["an", "a"] {
+            if let Some(ten) = rest
+                .strip_prefix(link)
+                .and_then(|r| number_piece(r, &NUMBER_TENS))
+            {
+                return Some(NumberReading {
+                    value: unit_value + ten.value,
+                    spelling: format!("{unit}{link}{}", ten.spelling),
+                });
+            }
+        }
+    }
+    None
+}
+
+/// `text` split at `keyword` (folded): what comes before and after it.
+fn split_at_keyword<'a>(text: &'a str, keyword: &str) -> Option<(&'a str, &'a str)> {
+    let at = text.find(keyword)?;
+    Some((&text[..at], &text[at + keyword.len()..]))
+}
+
+/// 1 to 9,999: below a hundred, or [unit or teen] "honnert" [below a hundred]; a teen before
+/// "honnert" is how years are said ("uechtzénghonnertfofzéng", 1815).
+fn number_below_thousand(text: &str) -> Option<NumberReading> {
+    if let Some(found) = number_below_hundred(text) {
+        return Some(found);
+    }
+    let (before, after) = split_at_keyword(text, "honnert")?;
+    let hundreds = if before.is_empty() {
+        NumberReading {
+            value: 1,
+            spelling: String::new(),
+        }
+    } else {
+        number_piece(before, &NUMBER_UNITS).or_else(|| number_piece(before, &NUMBER_TEENS))?
+    };
+    let rest = if after.is_empty() {
+        NumberReading {
+            value: 0,
+            spelling: String::new(),
+        }
+    } else {
+        number_below_hundred(after)?
+    };
+    Some(NumberReading {
+        value: hundreds.value * 100 + rest.value,
+        spelling: format!("{}honnert{}", hundreds.spelling, rest.spelling),
     })
 }
 
-/// 1 to 999: below a hundred, or [unit] "honnert" [below a hundred].
-fn is_below_thousand(word: &str) -> bool {
-    if is_below_hundred(word) {
-        return true;
+/// Below a million: [below a thousand] "dausend" [below a thousand], or below a thousand.
+fn number_below_million(text: &str) -> Option<NumberReading> {
+    if let Some(found) = number_below_thousand(text) {
+        return Some(found);
     }
-    let Some(at) = word.find("honnert") else {
-        return false;
+    let (before, after) = split_at_keyword(text, "dausend")?;
+    let thousands = if before.is_empty() {
+        NumberReading {
+            value: 1,
+            spelling: String::new(),
+        }
+    } else {
+        number_below_thousand(before)?
     };
-    let (before, after) = (&word[..at], &word[at + "honnert".len()..]);
-    (before.is_empty() || NUMBER_UNITS.contains(&before))
-        && (after.is_empty() || is_below_hundred(after))
+    let rest = if after.is_empty() {
+        NumberReading {
+            value: 0,
+            spelling: String::new(),
+        }
+    } else {
+        number_below_thousand(after)?
+    };
+    Some(NumberReading {
+        value: thousands.value * 1000 + rest.value,
+        spelling: format!("{}dausend{}", thousands.spelling, rest.spelling),
+    })
 }
 
-/// A whole number written in words, up to 999,999: [below a thousand] "dausend" [below a
-/// thousand], or below a thousand. Single pieces ("zwee", "honnert") are LOD words already; this
-/// only matters for compounds.
-fn is_number_word(word: &str) -> bool {
-    if is_below_thousand(word) {
-        return true;
+/// A number written in one word, whatever its accents. The spelling is the right one: the word
+/// with its accents, or, for millions written together ("…milliounvéierhonnert…"), the separate
+/// form ("… Milliounen véierhonnert…"). Single pieces ("zwee", "honnert") are LOD words already.
+fn read_number(word: &str) -> Option<NumberReading> {
+    let text = fold_number(word);
+    if let Some(found) = number_below_million(&text) {
+        return Some(found);
     }
-    let Some(at) = word.find("dausend") else {
-        return false;
+    let keyword = if text.contains("milliounen") {
+        "milliounen"
+    } else {
+        "millioun"
     };
-    let (before, after) = (&word[..at], &word[at + "dausend".len()..]);
-    (before.is_empty() || is_below_thousand(before))
-        && (after.is_empty() || is_below_thousand(after))
+    let (before, after) = split_at_keyword(&text, keyword)?;
+    let millions = if before.is_empty() {
+        NumberReading {
+            value: 1,
+            spelling: "eng".to_string(),
+        }
+    } else {
+        number_below_thousand(&before.replace("eng", "een"))?
+    };
+    let rest = if after.is_empty() {
+        None
+    } else {
+        Some(number_below_million(after)?)
+    };
+    let noun = if millions.value == 1 {
+        "Millioun"
+    } else {
+        "Milliounen"
+    };
+    let head = if millions.value == 1 {
+        "eng".to_string()
+    } else {
+        millions.spelling
+    };
+    let mut spelling = format!("{head} {noun}");
+    if let Some(rest) = &rest {
+        spelling.push(' ');
+        spelling.push_str(&rest.spelling);
+    }
+    Some(NumberReading {
+        value: millions.value * 1_000_000 + rest.map_or(0, |rest| rest.value),
+        spelling,
+    })
 }
 
 // ---------- word classification ----------
@@ -1246,6 +1393,8 @@ enum Status {
     /// A number written in words, in one piece as Luxembourgish writes it
     /// ("aachtdausendzweehonnertzweeasechzeg").
     Number,
+    /// A number written in words, but with wrong accents or millions written together.
+    NumberToFix,
 }
 
 struct Word {
@@ -1260,6 +1409,8 @@ struct Word {
     part_records: Option<Vec<Option<FormRecord>>>,
     corrections: Vec<StaticStr>,
     compound: Option<(String, FormRecord, String, FormRecord)>,
+    /// A number written in words: its value and its right spelling.
+    number: Option<NumberReading>,
 }
 
 fn classify(dictionary: &Dictionary, chars: &[char], token: &Token, sentence_start: bool) -> Word {
@@ -1277,6 +1428,7 @@ fn classify(dictionary: &Dictionary, chars: &[char], token: &Token, sentence_sta
         part_records: None,
         corrections: Vec::new(),
         compound: None,
+        number: None,
     };
     let resolve = |word: &mut Word, status: Status, form: String, record: Option<FormRecord>| {
         word.status = status;
@@ -1394,9 +1546,20 @@ fn classify(dictionary: &Dictionary, chars: &[char], token: &Token, sentence_sta
         resolve(&mut word, Status::Wrong, normalized, None);
         return word;
     }
-    if is_number_word(&lowercase) {
-        resolve(&mut word, Status::Number, normalized, None);
-        return word;
+    if let Some(reading) = read_number(&lowercase) {
+        // Read as a number: right as written, or to fix (accents, millions written together)
+        // unless the spellchecker.lu dictionary spells it this way.
+        let exact = reading.spelling == lowercase;
+        if exact || !dictionary.speller.check_any_case(&normalized) {
+            word.number = Some(reading);
+            let status = if exact {
+                Status::Number
+            } else {
+                Status::NumberToFix
+            };
+            resolve(&mut word, status, normalized, None);
+            return word;
+        }
     }
     // The spellchecker.lu dictionary knows many correct words the LOD lacks. Its case rule is
     // Hunspell's: a capital first letter is always accepted, since adjectives and participles
@@ -1820,6 +1983,26 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     };
     match word.status {
         Status::Ok | Status::Speller | Status::Number => {}
+        Status::NumberToFix => {
+            let Some(reading) = &word.number else {
+                return;
+            };
+            let expected = keep_case(text, &reading.spelling);
+            let value = reading.value.to_string();
+            // Millions stand apart: a separate word, so a warning; otherwise the accents.
+            let (severity, rule) = if reading.spelling.contains(' ') {
+                (Severity::Warning, "number_split")
+            } else {
+                (Severity::Error, "number_spelling")
+            };
+            add(
+                severity,
+                category::SPELLING,
+                rule,
+                params(&[("word", text), ("expected", &expected), ("value", &value)]),
+                vec![expected.clone()],
+            );
+        }
         Status::Wrong => add(
             Severity::Error,
             category::SPELLING,
@@ -3055,6 +3238,16 @@ pub unsafe extern "C" fn spell(ptr: *const u8, len: usize) -> i32 {
         (Some(loaded), Some(word)) => i32::from(loaded.speller.check_any_case(word)),
         _ => 0,
     }
+}
+
+/// Plain text: the value of word `wi` when it is a number written in words ("117649"), or "".
+#[no_mangle]
+pub extern "C" fn number(word_index: u32) -> *const u8 {
+    let value = last_word(word_index)
+        .and_then(|word| word.number.as_ref())
+        .map(|reading| reading.value.to_string())
+        .unwrap_or_default();
+    output(&value)
 }
 
 /// Number of dictionary entries loaded (0 before `init`).
