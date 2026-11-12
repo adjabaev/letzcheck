@@ -2612,7 +2612,7 @@ fn check_pronoun_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>
     let lowercase = analysis.lowercase(index);
     // (persons the verb may have, persons to suggest, pronoun may be a dative)
     let (allowed, targets, may_be_dative): (u32, &[usize], bool) = match lowercase.as_str() {
-        "hien" | "hatt" => (1 << 2, &[2], false),
+        "hien" | "hie" | "hatt" => (1 << 2, &[2], false),
         "si" => ((1 << 2) | (1 << 5), &[2, 5], false),
         "et" => ((1 << 2) | (1 << 5), &[2], false),
         "mir" => (1 << 3, &[3], true),

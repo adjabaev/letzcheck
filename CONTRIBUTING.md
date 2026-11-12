@@ -9,10 +9,15 @@ people trust a checker only as long as it is right when it speaks.
 1. **Silence over a false alarm.** A rule fires only where the LOD leaves no doubt. When a word has
    two genders, two readings (*ee* is an article and the pronoun "one") or a use the rule cannot see
    without parsing the sentence, the rule says nothing.
-2. **Every rule comes with sentences.** Wrong sentences it must catch go in `test/new-rules.txt`;
-   correct sentences that look close and must stay silent go in `test/no-alarm.txt`. A known gap
+2. **Every rule comes with sentences.** Wrong sentences it must catch go in `test/new-rules.txt`,
+   with the sentence it must become: `Ech hunn zwee Kaz. => Ech hunn zwou Kazen.` Applying the first
+   fix of every remark must give exactly that sentence, and that sentence must get no remark: one
+   click per mistake, no chain of fixes. Correct sentences that look close and must stay silent go in `test/no-alarm.txt`. A known gap
    you are not fixing goes in `test/known.txt` (`+ ` should be caught, `- ` should stay silent).
-3. **No new remark on the corpus.** `make corpus BASE=…` compares your build with the previous one
+3. **No regression.** Run `make check` before every commit: the cases above, then your build
+   against the last commit (`test/regress.mjs`), and it fails on any new remark on the corpus or any
+   typo caught or ranked worse. CI runs the same against the previous commit. For details,
+   `make corpus BASE=…` compares your build with the previous one
    on 54,996 correct sentences from the LOD. Every new remark it lists is a false alarm to fix. If
    you believe one is right (the corpus has a few real mistakes, mostly spacing), say why in the
    pull request. Remarks the previous build made too, with other parameters or a milder severity,

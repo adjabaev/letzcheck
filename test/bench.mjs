@@ -140,7 +140,7 @@ for (const b of builds) {
 // ---- grammar ----
 const SPELLING = new Set(['spelling', 'compound', 'unlisted', 'proper_noun'])
 const last = builds[builds.length - 1]
-const wrong = fs.readFileSync('test/new-rules.txt', 'utf8').split('\n').filter(l => l.trim() && !l.startsWith('#'))
+const wrong = fs.readFileSync('test/new-rules.txt', 'utf8').split('\n').filter(l => l.trim() && !l.startsWith('#')).map(l => l.split(' => ')[0])
 const grammarSentences = wrong.filter(s => { const r = last.run(s); return r.length && !r.some(i => SPELLING.has(i.category)) })
 const hGrammar = hunspellFlags(grammarSentences, false)
 const grammar = {

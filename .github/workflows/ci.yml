@@ -42,14 +42,11 @@ jobs:
           sudo apt-get install -y -q hunspell
           make spell
 
-      # Builds the engine as it was before this change and fails on any remark it did not make
-      # on the corpus of correct sentences.
-      - name: Corpus against the base build
+      # Builds the engine as it was before this change: fails on any remark it did not make on the
+      # corpus of correct sentences, and on typos caught or ranked worse (test/regress.mjs).
+      - name: Regressions against the base build
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then BASE=${{ github.event.pull_request.base.sha }}; else BASE=${{ github.event.before }}; fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then echo "no base commit, skipping"; exit 0; fi
-          git worktree add -q ../base "$BASE"
           # The base build gets its own data file, built from the same downloads: the format may differ.
-          mkdir -p ../base/data && cp -r data/lod ../base/data/ && cp -r data/spell ../base/data/
-          (cd ../base && make data/lod.txt wasm)
-          node test/corpus.mjs "../base/dist/letz.wasm@../base/data/lod.txt" dist/letz.wasm data/lod.txt data/corpus.txt --strict
+          node test/regress.mjs "$(sh tools/base_build.sh "$BASE")" dist/letz.wasm data/lod.txt data/corpus.txt

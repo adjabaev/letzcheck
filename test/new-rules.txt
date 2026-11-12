@@ -1,33 +1,35 @@
-Hien spillen all Dag Fussball.
-Dir spills ze vill.
-Si spills mat hirem Hond.
-Ech ginn haut net. Hien ginn och net.
-Hatt schaffen zu Lëtzebuerg.
-Ech hunn zwee Auto an dräi Kand.
-Si huet 3 Hond an 2 Kaz.
+# Lines with no "=>" only need a remark; their expected correction is in test/known.txt while
+# the fixes still chain.
+Hien spillen all Dag Fussball. => Hie spillt all Dag Fussball.
+Dir spills ze vill. => Dir spillt ze vill.
+Si spills mat hirem Hond. => Si spillt mat hirem Hond.
+Ech ginn haut net. Hien ginn och net. => Ech ginn haut net. Hie gëtt och net.
+Hatt schaffen zu Lëtzebuerg. => Hatt schafft zu Lëtzebuerg.
+Ech hunn zwee Auto an dräi Kand. => Ech hunn zwee Autoen an dräi Kanner.
+Si huet 3 Hond an 2 Kaz. => Si huet 3 Hënn an 2 Kazen.
 Mir wunnen zwou Stonn vun hei.
-Mir kommen vun dem Bësch.
-Hie geet zu dem Dokter.
-Ech sinn bei dem Coiffer.
-D'Buch läit op dem Dësch.
-Et ass schwéier ze spillt.
-Ech probéieren ze schafft.
-Ech iessen Kéis am Schnei.
-Den Hond Hond leeft.
-Ech wunnen zu Lëtzebuerg. mir hunn e Gaart.
-Moien ! Wéi geet et ?
-Ech sinn midd , mee frou.
-Ech hunn ee Fro.
-Hien huet ee Fro.
-Ech denken un ee Fro.
-Si mécht gär den Yoga.
-Hie fënnt de Yttrium.
+Mir kommen vun dem Bësch. => Mir komme vum Bësch.
+Hie geet zu dem Dokter. => Hie geet zum Dokter.
+Ech sinn bei dem Coiffer. => Ech si beim Coiffer.
+D'Buch läit op dem Dësch. => D'Buch läit um Dësch.
+Et ass schwéier ze spillt. => Et ass schwéier ze spillen.
+Ech probéieren ze schafft. => Ech probéieren ze schaffen.
 Mir drenken Kaffi am Gaart.
-Ech gesinn d´Hond.
+Ech iessen Kéis am Schnei. => Ech iesse Kéis am Schnéi.
+Den Hond Hond leeft. => Den Hond leeft.
+Ech wunnen zu Lëtzebuerg. mir hunn e Gaart. => Ech wunnen zu Lëtzebuerg. Mir hunn e Gaart.
+Moien ! Wéi geet et ? => Moien! Wéi geet et?
+Ech sinn midd , mee frou. => Ech si midd, mee frou.
+Ech hunn ee Fro. => Ech hunn eng Fro.
+Hien huet ee Fro. => Hien huet eng Fro.
+Ech denken un ee Fro. => Ech denken un eng Fro.
+Si mécht gär den Yoga. => Si mécht gär de Yoga.
+Hie fënnt de Yttrium. => Hie fënnt den Yttrium.
+Ech gesinn d´Hond. => Ech gesinn den Hond.
 Mir hunn honnertfoo Kéier.
-Am Joer uechtzenghonnertfofzéng.
-Si huet eenmilliounzweehonnert Euro.
-Et sinn dräihonnertfënnefanaachtzeg.
-Ech hunn zwee Kaz.
-Zwou Hond an zwou Kaz.
-Ech hunn zwou Hënn.
+Am Joer uechtzenghonnertfofzéng. => Am Joer uechtzénghonnertfofzéng.
+Si huet eenmilliounzweehonnert Euro. => Si huet eng Millioun zweehonnert Euro.
+Et sinn dräihonnertfënnefanaachtzeg. => Et sinn dräihonnertfënnefanachtzeg.
+Ech hunn zwee Kaz. => Ech hunn zwou Kazen.
+Zwou Hond an zwou Kaz. => Zwee Hënn an zwou Kazen.
+Ech hunn zwou Hënn. => Ech hunn zwee Hënn.

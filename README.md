@@ -41,6 +41,7 @@ rustup target add wasm32-unknown-unknown   # once
 make            # downloads the LOD (about 13 MB of zips) and the spellchecker.lu package (0.6 MB),
                 # builds data/lod.txt and dist/letz.wasm
 make test       # the hand-written cases in test/; fails if one breaks
+make check      # before a commit: the cases, then no new false alarm and no worse typo than HEAD
 make corpus     # every remark on 54,996 correct sentences from the LOD (all false alarms)
 make spell      # src/spell.rs against the real hunspell program, word by word (needs hunspell)
 ```
@@ -106,9 +107,9 @@ through the same tests:
 ## Contributing
 
 New rules and fixes are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). In short, every rule comes
-with test sentences, and `make corpus BASE=…` must show no new remark on the corpus of correct
-sentences. The code follows the Google Rust style guide; CI checks formatting, Clippy, the cases and
-the corpus.
+with test sentences and the sentence each must become, and `make check` must pass: no new remark
+on the corpus of correct sentences, no typo handled worse. The code follows the Google Rust style
+guide; CI checks formatting, Clippy, the cases and the regressions against the previous commit.
 
 The current build makes 2,497 remarks on the 54,996 corpus sentences (3,021 before the
 spellchecker.lu dictionary). Many come from the way the

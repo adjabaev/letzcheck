@@ -3,7 +3,7 @@ LOD ?= --version 260727
 SPELL ?=
 WASM := target/wasm32-unknown-unknown/release/letz.wasm
 
-.PHONY: all data wasm test spell bench corpus same clean
+.PHONY: all data wasm test check spell bench corpus same clean
 all: data wasm
 
 data: data/lod.txt data/corpus.txt
@@ -32,6 +32,14 @@ wasm:
 # Hand-written cases (test/new-rules.txt, test/no-alarm.txt); fails on a broken case.
 test: wasm data/lod.txt
 	node test/cases.mjs dist/letz.wasm data/lod.txt
+
+# Before every commit: the hand-written cases, then the new build against the one it replaces
+# (HEAD, or REF=<git revision>), item by item: no new false alarm on the corpus, no typo handled
+# worse. The base is built once per revision in target/base/.
+REF ?= HEAD
+check: wasm data
+	node test/cases.mjs dist/letz.wasm data/lod.txt --quiet
+	node test/regress.mjs "$$(sh tools/base_build.sh $(REF))" dist/letz.wasm data/lod.txt data/corpus.txt
 
 # src/spell.rs against the real hunspell program (apt install hunspell): same verdict on every word.
 spell: wasm data
