@@ -304,7 +304,20 @@ fn is_clitic(word: &str) -> bool {
 fn is_s_function_word(word: &str) -> bool {
     matches!(
         word,
-        "si" | "se" | "sech" | "säin" | "säi" | "seng" | "sengem" | "senger" | "sengen" | "sou"
+        // "s" is the clitic of the 2nd person: the LOD always keeps the n ("wann s de", 351
+        // examples). Before "seng…", "säin", "sech", "si" it writes both ("a sengem" 94, "an
+        // sengem" 13): the rule stays silent rather than flag a form the LOD uses.
+        "s" | "si"
+            | "se"
+            | "sech"
+            | "säin"
+            | "säi"
+            | "seng"
+            | "senge"
+            | "sengem"
+            | "senger"
+            | "sengen"
+            | "sou"
     )
 }
 fn is_polite_form(word: &str) -> bool {
