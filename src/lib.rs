@@ -2199,6 +2199,9 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
 
     if only_n_variant && !full_forms.is_empty() {
         // The word is a form without its n: is the n needed here?
+        if ech_du_without_form(analysis, index, full_forms[0]) {
+            return;
+        }
         let full = keep_case(text, full_forms[0]);
         match next {
             Some(next)
@@ -2498,6 +2501,38 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
         ]),
         vec![replacement],
     ));
+}
+
+/// "ech" / "du" right before a verb whose form with its n is not that person's form:
+/// "ech brauche" is not "ech brauchen" (the LOD conjugates "ech brauch"), so the n rule
+/// has nothing to restore.
+fn ech_du_without_form(analysis: &Analysis, index: usize, full: &str) -> bool {
+    if index == 0 || !analysis.next_is_adjacent(index - 1) {
+        return false;
+    }
+    let person = match analysis.lowercase(index - 1).as_str() {
+        "ech" => 0,
+        "du" => 1,
+        _ => return false,
+    };
+    let word = &analysis.words[index];
+    if !analysis.only_part_of_speech(word, "VRB") {
+        return false;
+    }
+    let dictionary = analysis.dictionary;
+    let cells: Vec<StaticStr> = dictionary
+        .entry_indices(word.record)
+        .iter()
+        .filter_map(|&i| dictionary.conjugations.get(&(i as u32)))
+        .map(|forms| forms[2 + person])
+        .collect();
+    // Every verb the word may be conjugates this person without the full form.
+    !cells.is_empty()
+        && cells.iter().all(|cell| {
+            !cell
+                .split(" / ")
+                .any(|alternative| alternative.split(' ').next() == Some(full))
+        })
 }
 
 /// "ech" / "du" followed by a verb form of another person: "ech spillt" → "ech spillen".
