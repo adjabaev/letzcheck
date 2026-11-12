@@ -65,8 +65,9 @@ struct Entry {
     /// The LOD translations, "; "-separated, in the order of LANGUAGES.
     translations: [StaticStr; 4],
     plural: StaticStr,
-    /// For a word starting with Y, how the Y sounds: b'j' (consonant, as in Yoga), b'v' (vowel,
-    /// as in Yttrium), 0 when unknown or not a Y word. From the LOD pronunciation.
+    /// How the word starts to the ear where its spelling misleads (c j q x y, g as [dʒ], a vowel
+    /// read [j], initialisms): b'v' when the n-rule keeps the n before it (Job, Yttrium), b'j'
+    /// when it drops (Yoga, User), 0 when the letter tells. From the LOD pronunciation.
     y_onset: u8,
 }
 
@@ -2158,7 +2159,9 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
         }
         Status::Case => {
             let form = word.form.as_str();
-            if starts_upper(text) {
+            if starts_upper(text) && used_as_noun(analysis, index) {
+                // "eisen Eelsten", "d'Faaschten", "am Zweete Weltkrich": the capital is right.
+            } else if starts_upper(text) {
                 // A capital the LOD does not have: the lower-case word, then capitalised neighbours.
                 let mut fixes = vec![form.to_string()];
                 fixes.extend(
@@ -2187,6 +2190,56 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
             }
         }
     }
+}
+
+/// Words that take a determiner: after one of them, a capitalised adjective, infinitive or
+/// number is used as a noun ("eisen Eelsten", "d'Faaschten", "beim Schwammen", "eppes Neies").
+const NOUN_MAKERS: [&str; 62] = [
+    "d'", "d’", "de", "den", "der", "dat", "déi", "dem", "deen", "dee", "deem", "deenen", "e",
+    "en", "eng", "engem", "enger", "engen", "ee", "een", "eise", "eist", "eisen", "eiser", "eisem",
+    "mäi", "mäin", "meng", "mengem", "menger", "mengen", "däi", "däin", "deng", "säi", "säin",
+    "seng", "sengem", "senger", "sengen", "hir", "hire", "hiren", "är", "äre", "ären", "beim",
+    "am", "vum", "zum", "um", "nom", "virum", "ville", "vill", "puer", "all", "eppes", "näischt",
+    "keen", "kee", "keng",
+];
+
+/// A capitalised word the LOD only has in lower case, used as a noun: after a determiner or a
+/// preposition with its article ("eisen Eelsten", "d'Faaschten", "beim Schwammen"), or as the
+/// first part of a name before a capitalised noun ("Zweete Weltkrich", "Gréng Zeiselen").
+fn used_as_noun(analysis: &Analysis, index: usize) -> bool {
+    let words = analysis.words;
+    // Only an adjective, a number or a verb's infinitive becomes a noun: "d'Baut" is a typo of
+    // "d'Braut", not the verb form "baut" as a noun.
+    let dictionary = analysis.dictionary;
+    let form = words[index].form.as_str();
+    let nominal = dictionary
+        .entry_indices(words[index].record)
+        .iter()
+        .any(|&i| {
+            let entry = &dictionary.entries[i];
+            match entry.part_of_speech {
+                // an adjective used as a noun takes an ending ("Alen", "Eelsten"; "Séier" alone is
+                // more likely a typo of "Stéier")
+                "ADJ" => entry.lemma != form,
+                "NB" => true,
+                "VRB" => {
+                    entry.lemma == form || dictionary.n_dropped.get(entry.lemma) == Some(&form)
+                }
+                _ => false,
+            }
+        });
+    if !nominal {
+        return false;
+    }
+    let after_maker = index > 0
+        && (is_blank(analysis.gap_after(index - 1)) || words[index - 1].clitic)
+        && NOUN_MAKERS.contains(&analysis.lowercase(index - 1).as_str());
+    if after_maker {
+        return true;
+    }
+    analysis.next_is_adjacent(index)
+        && starts_upper(&words[index + 1].text)
+        && analysis.only_part_of_speech(&words[index + 1], "SUBST")
 }
 
 /// The n-rule (Eifeler Regel): a final n stays before a vowel and n d t z h, and at the end of a
