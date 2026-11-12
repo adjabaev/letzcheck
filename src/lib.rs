@@ -2683,6 +2683,37 @@ fn fit_n(analysis: &Analysis, verb_index: usize, wanted: &str) -> String {
     wanted.to_string()
 }
 
+/// Every fix, whatever the rule, gets the n-rule for the word after it: "zwou Stonn vun" →
+/// "Stonne" (not "Stonnen", then a second remark), "drenken Kaffi" → "drénke". One click per
+/// mistake. The n-rule's own remarks are already right.
+fn fit_fixes_to_n_rule(analysis: &Analysis, issues: &mut [Issue]) {
+    for issue in issues.iter_mut() {
+        if issue.category == category::N_RULE {
+            continue;
+        }
+        // The last word the fix replaces.
+        let last = match issue.end {
+            Some(end) => (issue.word_index..analysis.words.len())
+                .find(|&j| analysis.utf16_offsets[analysis.words[j].end] == end),
+            None => Some(issue.word_index),
+        };
+        let Some(last) = last else { continue };
+        for fix in issue.fixes.iter_mut() {
+            let (head, tail) = match fix.rfind(' ') {
+                Some(space) => fix.split_at(space + 1),
+                None => ("", fix.as_str()),
+            };
+            if tail.is_empty() {
+                continue;
+            }
+            let fitted = fit_n(analysis, last, tail);
+            if fitted != tail {
+                *fix = format!("{head}{fitted}");
+            }
+        }
+    }
+}
+
 /// The persons a subject pronoun stands for, as a mask (bit 0 ech … bit 5 si).
 fn pronoun_persons(word: &str) -> u32 {
     match word {
@@ -3270,6 +3301,7 @@ fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
     check_digits_plural(&analysis, &tokens, &word_at, &mut issues);
     check_space_before_punctuation(&analysis, &tokens, &word_at, &mut issues);
 
+    fit_fixes_to_n_rule(&analysis, &mut issues);
     issues.sort_by_key(|issue| utf16_offsets[words[issue.word_index].start]);
     let json = write_json(&tokens, &words, &issues, dictionary, &utf16_offsets);
     // SAFETY: rules 1 and 2 of the module state: no `last_word()` reference is alive during `analyze`.

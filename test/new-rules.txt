@@ -1,5 +1,4 @@
-# Lines with no "=>" only need a remark; their expected correction is in test/known.txt while
-# the fixes still chain.
+# Lines with no "=>" only need a remark (no fix can be expected).
 Hien spillen all Dag Fussball. => Hie spillt all Dag Fussball.
 Dir spills ze vill. => Dir spillt ze vill.
 Si spills mat hirem Hond. => Si spillt mat hirem Hond.
@@ -7,14 +6,14 @@ Ech ginn haut net. Hien ginn och net. => Ech ginn haut net. Hie gëtt och net.
 Hatt schaffen zu Lëtzebuerg. => Hatt schafft zu Lëtzebuerg.
 Ech hunn zwee Auto an dräi Kand. => Ech hunn zwee Autoen an dräi Kanner.
 Si huet 3 Hond an 2 Kaz. => Si huet 3 Hënn an 2 Kazen.
-Mir wunnen zwou Stonn vun hei.
+Mir wunnen zwou Stonn vun hei. => Mir wunnen zwou Stonne vun hei.
 Mir kommen vun dem Bësch. => Mir komme vum Bësch.
 Hie geet zu dem Dokter. => Hie geet zum Dokter.
 Ech sinn bei dem Coiffer. => Ech si beim Coiffer.
 D'Buch läit op dem Dësch. => D'Buch läit um Dësch.
 Et ass schwéier ze spillt. => Et ass schwéier ze spillen.
 Ech probéieren ze schafft. => Ech probéieren ze schaffen.
-Mir drenken Kaffi am Gaart.
+Mir drenken Kaffi am Gaart. => Mir drénke Kaffi am Gaart.
 Ech iessen Kéis am Schnei. => Ech iesse Kéis am Schnéi.
 Den Hond Hond leeft. => Den Hond leeft.
 Ech wunnen zu Lëtzebuerg. mir hunn e Gaart. => Ech wunnen zu Lëtzebuerg. Mir hunn e Gaart.
