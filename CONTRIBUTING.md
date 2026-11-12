@@ -15,8 +15,10 @@ people trust a checker only as long as it is right when it speaks.
    click per mistake, no chain of fixes. Correct sentences that look close and must stay silent go in `test/no-alarm.txt`. A known gap
    you are not fixing goes in `test/known.txt` (`+ ` should be caught, `- ` should stay silent).
 3. **No regression.** Run `make check` before every commit: the cases above, then your build
-   against the last commit (`test/regress.mjs`), and it fails on any new remark on the corpus or any
-   typo caught or ranked worse. CI runs the same against the previous commit. For details,
+   against the last commit (`test/regress.mjs`), and it fails on any new remark on the corpus, any
+   certified mistake caught or fixed before and not now, or any typo caught or ranked worse. The
+   certified mistakes (`test/mutations.mjs`) are LOD sentences with one n-rule mistake the rule leaves
+   no doubt about (about 60,000); the LOD sentence is the expected correction. CI runs the same against the previous commit. For details,
    `make corpus BASE=…` compares your build with the previous one
    on 54,996 correct sentences from the LOD. Every new remark it lists is a false alarm to fix. If
    you believe one is right (the corpus has a few real mistakes, mostly spacing), say why in the

@@ -5,13 +5,16 @@
 // build is worse anywhere it can be measured without a human:
 //   corpus  every sentence of the corpus is correct: any remark the base build did not make on a
 //           sentence is a new false alarm, and fails.
+//   certified mistakes  LOD sentences with one mistake the rule leaves no doubt about
+//           (test/mutations.mjs): fails on any case caught or fixed before and not now.
 //   typos   words of the corpus with one seeded typo: fails when fewer are caught, fewer get the
 //           right word as first fix, or fewer get it among the first four. Each word that got worse
 //           is listed, even when the totals hold.
 // Remarks the new build no longer makes on the corpus are listed as gains.
 // Usage: node test/regress.mjs <base.wasm[@lod.txt]> <new.wasm> <lod.txt> <corpus.txt> [--typos 3000]
 import fs from 'node:fs'
-import { load, remarks } from './engine.mjs'
+import { load, remarks, applyFirstFixes } from './engine.mjs'
+import { cases, score as mistakeScore } from './mutations.mjs'
 
 const args = process.argv.slice(2)
 const ti = args.indexOf('--typos'), typoCount = ti < 0 ? 3000 : +args.splice(ti, 2)[1]
@@ -41,6 +44,29 @@ for (const s of corpus) {
 list('NEW false alarms on correct sentences', added)
 list('false alarms gone', lost)
 if (added.length) failures.push(`${added.length} new false alarm(s) on the corpus`)
+
+// ---- certified mistakes (test/mutations.mjs) ----
+// LOD sentences with one mistake the rule leaves no doubt about; the LOD sentence is the answer.
+// Every case the base build fixed (or caught) and the new one does not is a regression.
+{
+  const levels = ['missed', 'caught', 'fixed']
+  const byFamily = {}, worseCases = []
+  for (const c of cases(lod, corpusFile)) {
+    const f = byFamily[c.family] ??= { cases: 0, base: [0, 0], next: [0, 0] }
+    const a = mistakeScore(base, c, remarks, applyFirstFixes), b = mistakeScore(next, c, remarks, applyFirstFixes)
+    f.cases++
+    if (a >= 1) f.base[0]++; if (a >= 2) f.base[1]++
+    if (b >= 1) f.next[0]++; if (b >= 2) f.next[1]++
+    if (b < a) worseCases.push(`${c.family}: ${levels[a]} → ${levels[b]}\n      ${c.wrong}\n      want: ${c.right}`)
+  }
+  console.log('\ncertified mistakes:          base → new')
+  for (const [family, f] of Object.entries(byFamily)) {
+    const p = n => (100 * n / f.cases).toFixed(2) + '%'
+    console.log(`  ${(family + ' (' + f.cases + ')').padEnd(26)}   caught ${p(f.base[0])} → ${p(f.next[0])}   fixed ${p(f.base[1])} → ${p(f.next[1])}`)
+  }
+  list('certified mistakes handled worse than before', worseCases)
+  if (worseCases.length) failures.push(`${worseCases.length} certified mistake(s) handled worse`)
+}
 
 // ---- typos ----
 let seed = 11

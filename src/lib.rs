@@ -2195,13 +2195,31 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     let adjacent = analysis.next_is_adjacent(index);
     let after_s = index > 0 && analysis.words[index - 1].normalized.ends_with('s');
 
-    let mut full_forms: Vec<&str> = match word.record {
+    // At the start of a sentence the capital is the sentence's: "E nervösen Houscht" is the
+    // article "e", not the letter "E" (the LOD entry of the capitalised form).
+    let mut record = word.record;
+    if analysis.starts[index].loose
+        && record.is_none_or(|record| record.full_forms.is_empty())
+        && text.chars().next().is_some_and(char::is_uppercase)
+    {
+        // Only a word of its own: "nu" is the n-less form only inside "nu mol" / "nun emol".
+        if let Some(lower) = dictionary.valid_record(&lowercase_first(&word.form)) {
+            let single_word = dictionary
+                .entry_indices(Some(lower))
+                .iter()
+                .any(|&i| !dictionary.entries[i].lemma.contains(' '));
+            if !lower.full_forms.is_empty() && single_word {
+                record = Some(lower);
+            }
+        }
+    }
+    let mut full_forms: Vec<&str> = match record {
         Some(record) if !word.clitic && !record.full_forms.is_empty() => {
             record.full_forms.split('|').collect()
         }
         _ => Vec::new(),
     };
-    let mut only_n_variant = word.record.is_some_and(|record| record.only_n_variant);
+    let mut only_n_variant = record.is_some_and(|record| record.only_n_variant);
     if !word.clitic {
         if let Some(full) = forced_full_form(&word.form) {
             full_forms = vec![full];
@@ -2260,8 +2278,16 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     // A Y that drops the n is the consonant [j]: the "sound" parameter says so, since the letter
     // alone looks like a vowel.
     let sound = if next_initial == "y" { "j" } else { "" };
-    if let Some(&without_n) = dictionary.n_dropped.get(word.form.as_str()) {
-        if dictionary.valid_record(without_n).is_some() && word.form != without_n {
+    // At the start of a sentence the capital is the sentence's, not the word's: "Wann mir" is
+    // "wann mir" ("Hunn", the rooster, keeps its own entry when it has one).
+    let lowered;
+    let mut form = word.form.as_str();
+    if !dictionary.n_dropped.contains_key(form) && analysis.starts[index].loose {
+        lowered = lowercase_first(form);
+        form = lowered.as_str();
+    }
+    if let Some(&without_n) = dictionary.n_dropped.get(form) {
+        if dictionary.valid_record(without_n).is_some() && form != without_n {
             let fixed = keep_case(text, without_n);
             issues.push(Issue::new(
                 index,
