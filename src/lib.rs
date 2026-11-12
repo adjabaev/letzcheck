@@ -2880,7 +2880,8 @@ fn check_number_word(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     if !NUMBER_WORDS.contains(&lowercase.as_str()) {
         return;
     }
-    // "allen zwee" means both; "d'aacht Joerhonnert" is an ordinal after an article.
+    // "allen zwee" means both; "d'aacht Joerhonnert" is an ordinal after an article. After the
+    // plural "déi" the number counts: "déi zwee Hënn".
     let after_article_or_all = index > 0
         && matches!(
             analysis.lowercase(index - 1).as_str(),
@@ -2892,7 +2893,6 @@ fn check_number_word(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
                 | "den"
                 | "de"
                 | "dat"
-                | "déi"
                 | "dem"
                 | "der"
                 | "am"

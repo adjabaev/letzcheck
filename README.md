@@ -42,7 +42,7 @@ make            # downloads the LOD (about 13 MB of zips) and the spellchecker.l
                 # builds data/lod.txt and dist/letz.wasm
 make test       # the hand-written cases in test/; fails if one breaks
 make check      # before a commit: the cases, then against HEAD: no new false alarm, no certified
-                # mistake (LOD sentence with one n-rule mistake) handled worse, no worse typo
+                # mistake (LOD sentence with one known mistake) handled worse, no worse typo
 make corpus     # every remark on 54,996 correct sentences from the LOD (all false alarms)
 make spell      # src/spell.rs against the real hunspell program, word by word (needs hunspell)
 ```

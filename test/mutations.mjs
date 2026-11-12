@@ -18,6 +18,14 @@
 //                 pronoun in any LOD table, nor a past participle anywhere ("du bezuelt" can be a
 //                 perfect), and for mir/dir (also datives: "mir ass kal") not a 3rd-person form.
 //
+//   gender_wrong  a determiner right before a singular noun of one gender in every LOD entry gets
+//                 the form of another gender: "de Mann" → "d'Mann", "eng Fro" → "e Fro", "dem Bësch"
+//                 → "der Bësch", "meng Mamm" → "mäi Mamm". Only when the LOD never writes that
+//                 determiner before that noun ("der Däiwel" is in the LOD: not a case).
+//   number_plural_wrong  a number word before a plural the LOD lists for a noun gets the singular:
+//                 "zwee Hënn" → "zwee Hond". Only nouns whose singular the LOD never writes after a
+//                 number ("dräi Mol", "zwee Liter": not cases).
+//
 // The n-less form of a word comes from the LOD inflections (lod.txt forms marked "n"). Letters
 // whose sound may differ from their spelling (c, j, q, x, y: "Job", "Yoga", "Chili") are left out.
 //
@@ -37,12 +45,16 @@ const PRONOUNS = { ech: 0, du: 1, hien: 2, hie: 2, hatt: 2, mir: 3, mer: 3, dir:
 export function cases(lodFile, corpusFile) {
   const fullToShort = new Map(), shortToFull = new Map()
   // Present forms per person, every LOD table: form → persons it is; table rows to swap from.
-  const personsOf = new Map(), participles = new Set(), tables = [], soundsOff = new Set()
+  const personsOf = new Map(), participles = new Set(), tables = [], soundsOff = new Set(), nouns = []
   const words = cell => cell.split(' / ').map(alt => alt.split(' ')[0]).filter(Boolean)
   for (const line of fs.readFileSync(lodFile, 'utf8').split('\n')) {
     const f = line.split('\t')
     // Words the LOD says sound otherwise than they are spelt (Job, Gin, Yoga): not certain cases.
-    if (f.length === 11 && f[8]) { soundsOff.add(f[1].toLowerCase()); continue }
+    if (f.length === 11) {
+      if (f[8]) soundsOff.add(f[1].toLowerCase())
+      if (f[2] === 'SUBST') nouns.push({ lemma: f[1], gender: f[3], plurals: f[7] ? f[7].split(', ') : [] })
+      continue
+    }
     if (f.length === 9 && /^\d+$/.test(f[0])) {
       for (const pp of words(f[2])) participles.add(pp)
       const row = f.slice(3, 9).map(words)
@@ -119,6 +131,74 @@ export function cases(lodFile, corpusFile) {
         seen.add(w)
         out.push({ family: 'verb_person_wrong', wrong: right.slice(0, v.index) + w + right.slice(v.index + v[0].length), right, start: v.index, end: v.index + w.length })
       })
+    }
+  }
+  // Gender of the determiner. A noun is certain when every LOD entry with that spelling is a noun
+  // of the same single gender, and the spelling is no plural of any noun.
+  // ("Mann" is also a plural of "Mann": "d'Mann" can be right)
+  const genderOf = new Map(), pluralForms = new Map(), selfPlural = new Set()
+  for (const n of nouns) {
+    genderOf.set(n.lemma, genderOf.has(n.lemma) && genderOf.get(n.lemma) !== n.gender ? '?' : n.gender)
+    for (const p of n.plurals) if (p === n.lemma) selfPlural.add(p)
+    for (const p of n.plurals) if (p && p !== n.lemma && !p.includes(' ')) {
+      if (!pluralForms.has(p)) pluralForms.set(p, new Set())
+      pluralForms.get(p).add(n.lemma)
+    }
+  }
+  const nounGender = w => { const g = genderOf.get(w); return g && /^[MFN]$/.test(g) && !pluralForms.has(w) && !selfPlural.has(w) ? g : '' }
+  // determiner → [gender it fits, the form for the other genders]; "N" uses the masculine forms
+  // except for the definite article.
+  const SWAP = {
+    den: ['M', { F: "d'" }], de: ['M', { F: "d'" }], "d'": ['FN', { M: 'den|de' }],
+    en: ['MN', { F: 'eng' }], e: ['MN', { F: 'eng' }], eng: ['F', { M: 'en|e', N: 'en|e' }],
+    dem: ['MN', { F: 'der' }], der: ['F', { M: 'dem', N: 'dem' }],
+    engem: ['MN', { F: 'enger' }], enger: ['F', { M: 'engem', N: 'engem' }],
+    'mäin': ['MN', { F: 'meng' }], 'mäi': ['MN', { F: 'meng' }], meng: ['F', { M: 'mäin|mäi', N: 'mäin|mäi' }],
+    'däin': ['MN', { F: 'deng' }], 'däi': ['MN', { F: 'deng' }], deng: ['F', { M: 'däin|däi', N: 'däin|däi' }],
+    'säin': ['MN', { F: 'seng' }], 'säi': ['MN', { F: 'seng' }], seng: ['F', { M: 'säin|säi', N: 'säin|säi' }],
+    keen: ['MN', { F: 'keng' }], kee: ['MN', { F: 'keng' }], keng: ['F', { M: 'keen|kee', N: 'keen|kee' }],
+  }
+  // What the LOD writes: determiner + noun pairs, number + noun pairs.
+  const detPairs = new Set(), numberPairs = new Set()
+  const NUMBERS = new Set(['zwee', 'zwou', 'dräi', 'véier', 'fënnef', 'sechs', 'siwen', 'siwe', 'aacht', 'néng', 'zéng', 'eelef', 'zwielef', 'honnert', 'dausend'])
+  const detRe = /(?<![\p{L}'’´-])(d['’]|\p{L}+ )(\p{Lu}\p{L}*)/gu
+  for (const s of sentences) for (const m of s.matchAll(detRe)) {
+    const det = m[1].trim().toLowerCase().replace('’', "'")
+    detPairs.add(det + ' ' + m[2])
+    if (NUMBERS.has(det)) numberPairs.add(det + ' ' + m[2])
+  }
+  const pick = (variants, noun) => {
+    const [withN, withoutN] = variants.split('|')
+    if (!withoutN) return withN
+    const initial = noun[0].toLowerCase()
+    return KEEP.has(initial) ? withN : DROP.has(initial) ? withoutN : ''
+  }
+  for (const right of sentences) for (const m of right.matchAll(detRe)) {
+    const raw = m[1], noun = m[2], det = raw.trim().toLowerCase().replace('’', "'")
+    const at = m.index, before = right.slice(0, at)
+    // number + plural → number + singular
+    if (NUMBERS.has(det) && pluralForms.has(noun) && !genderOf.has(noun)) {
+      const singulars = [...pluralForms.get(noun)]
+      const singular = singulars[0]
+      if (singulars.length === 1 && ![...NUMBERS].some(n => numberPairs.has(n + ' ' + singular))) {
+        const start = at + raw.length
+        out.push({ family: 'number_plural_wrong', wrong: right.slice(0, start) + singular + right.slice(start + noun.length), right, start, end: start + singular.length })
+      }
+      continue
+    }
+    const swap = SWAP[det], gender = nounGender(noun)
+    if (!swap || !gender || !swap[0].includes(gender) || soundsOff.has(noun.toLowerCase())) continue
+    if (/\bs\s*$/.test(before)) continue          // "wann s de Zäit hues": "de" is "du"
+    for (const [other, variants] of Object.entries(swap[1])) {
+      if (other === gender) continue
+      const form = pick(variants, noun)
+      if (!form || detPairs.has(form + ' ' + noun)) continue
+      // keep the case of the determiner as written
+      const shown = raw[0] === raw[0].toUpperCase() ? form[0].toUpperCase() + form.slice(1) : form
+      const glue = shown.endsWith("'") ? '' : ' '
+      const wrong = before + shown + glue + right.slice(at + raw.length)
+      out.push({ family: 'gender_wrong', wrong, right, start: at, end: at + shown.length + glue.length + noun.length })
+      break
     }
   }
   return out
