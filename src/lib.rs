@@ -427,7 +427,11 @@ fn build_determiners() -> HashMap<String, Determiner> {
                 Some(neuter) => determiner("M", &[('F', feminine), ('N', neuter)]),
                 None => determiner("MN", &[('F', feminine)]),
             };
-            entry.plural = Some(feminine.to_string());
+            // "hiren / hire", "eisen / eise", "ären / äre", "dësen / dëse" are also the dative
+            // plural ("mat hire Kanner", "vun eise Clienten"): no plural check without the case.
+            if neuter.is_none() {
+                entry.plural = Some(feminine.to_string());
+            }
             put(&mut table, form, entry);
         }
         put(
@@ -2203,6 +2207,26 @@ const NOUN_MAKERS: [&str; 62] = [
     "keen", "kee", "keng",
 ];
 
+/// The lower-case reading of a capitalised word is an infinitive ("Spullen", "Schwammen") or an
+/// inflected adjective ("Franséischen", "Alen"): written with a capital, it is used as a noun.
+fn lower_reads_as_noun(dictionary: &Dictionary, form: &str) -> bool {
+    let lower = lowercase_first(form);
+    let Some(record) = dictionary.valid_record(&lower) else {
+        return false;
+    };
+    dictionary.entry_indices(Some(record)).iter().any(|&i| {
+        let entry = &dictionary.entries[i];
+        match entry.part_of_speech {
+            "ADJ" => entry.lemma != lower,
+            "VRB" => {
+                entry.lemma == lower
+                    || dictionary.n_dropped.get(entry.lemma) == Some(&lower.as_str())
+            }
+            _ => false,
+        }
+    })
+}
+
 /// A capitalised word the LOD only has in lower case, used as a noun: after a determiner or a
 /// preposition with its article ("eisen Eelsten", "d'Faaschten", "beim Schwammen"), or as the
 /// first part of a name before a capitalised noun ("Zweete Weltkrich", "Gréng Zeiselen").
@@ -2502,6 +2526,8 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
             !is_n_form_of(entry.lemma)
         });
     let span = analysis.slice(next.start, noun.end);
+    // "beim Spullen", "am Franséischen": an infinitive or an adjective used as a noun, not a plural.
+    let is_plural = is_plural && !lower_reads_as_noun(dictionary, noun_form);
 
     // A plural noun after a singular determiner that has a plural form.
     if let (Some(plural), true, Some(&first)) = (
