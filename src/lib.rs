@@ -2318,6 +2318,16 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
         (None, Some(determiner)) => determiner.genders,
         (None, None) => return,
     };
+    // "allen zwee" means both: no agreement with a noun after it
+    if number_genders.is_some()
+        && index > 0
+        && matches!(
+            analysis.lowercase(index - 1).as_str(),
+            "allen" | "all" | "alle" | "allebéid"
+        )
+    {
+        return;
+    }
     let after_s = index > 0 && words[index - 1].normalized.ends_with('s');
     if !analysis.next_is_adjacent(index)
         || (lowercase == "de" && after_s)
@@ -2331,6 +2341,7 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
         next_initial.is_empty() || keeps_n_before(dictionary, next, &next_initial) == Some(true);
 
     let mut noun = next;
+    let mut noun_index = index + 1;
     // A number in between ("um dräi Auer", "den dräi Kanner") changes the agreement: no check then.
     let mut counted = false;
     if let Some(after) = words.get(index + 2) {
@@ -2347,10 +2358,18 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
             {
                 counted = entries.iter().all(|&i| part_of_speech(i) == "NB");
                 noun = after;
+                noun_index = index + 2;
             }
         }
     }
     if noun.status != Status::Ok || noun.clitic || !starts_upper(&noun.text) || counted {
+        return;
+    }
+    // "zwou Slow Motions": another capitalised word right after, the noun is a multi-word name
+    if number_genders.is_some()
+        && analysis.next_is_adjacent(noun_index)
+        && starts_upper(&words[noun_index + 1].text)
+    {
         return;
     }
 
@@ -2419,8 +2438,9 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
             continue;
         }
         let fits = if number_genders.is_some() {
-            // after zwee / zwou the noun must be a plural form
-            !((is_lemma && !is_plural_form) || is_n_form_of(entry.lemma))
+            // after zwee / zwou: the plural, or a singular that has a plural
+            // (check_number_plural flags it; the gender is the same)
+            !is_n_form_of(entry.lemma) && (!is_lemma || is_plural_form || !entry.plural.is_empty())
         } else {
             // after an article the noun must be its singular lemma
             is_lemma && !is_plural_form
@@ -2651,8 +2671,62 @@ fn check_number_word(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
         return;
     }
     if let Some(noun_index) = analysis.noun_after(index) {
+        let before = issues.len();
         check_number_plural(analysis, noun_index, &lowercase, issues);
+        if issues.len() > before && noun_index == index + 1 {
+            merge_number_gender(analysis, index, noun_index, issues);
+        }
     }
+}
+
+/// "zwee Kaz": zwee has the wrong gender and Kaz is singular. The two remarks become one, over
+/// both words, with one fix: "zwou Kazen".
+fn merge_number_gender(
+    analysis: &Analysis,
+    index: usize,
+    noun_index: usize,
+    issues: &mut Vec<Issue>,
+) {
+    let Some(gender_at) = issues
+        .iter()
+        .position(|issue| issue.word_index == index && issue.rule == "gender_determiner")
+    else {
+        return;
+    };
+    let Some(plural) = issues.last().and_then(|issue| issue.fixes.first().cloned()) else {
+        return;
+    };
+    let Some(number) = issues[gender_at].fixes.first().cloned() else {
+        return;
+    };
+    let gender = issues[gender_at]
+        .params
+        .iter()
+        .find(|(name, _)| *name == "gender")
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default();
+    let words = analysis.words;
+    let fixed = format!("{number} {plural}");
+    let current = analysis.slice(words[index].start, words[noun_index].end);
+    issues.pop();
+    issues.remove(gender_at);
+    issues.push(
+        Issue::new(
+            index,
+            Severity::Warning,
+            category::PLURAL,
+            "number_gender_plural",
+            params(&[
+                ("noun", &words[noun_index].text),
+                ("gender", &gender),
+                ("plural", &plural),
+                ("fixed", &fixed),
+                ("current", &current),
+            ]),
+            vec![fixed.clone()],
+        )
+        .ending_at(analysis.utf16_offsets[words[noun_index].end]),
+    );
 }
 
 /// Number before noun `noun_index` (`label` = the number as written): flag a singular noun that
@@ -2666,6 +2740,10 @@ fn check_number_plural(
     let dictionary = analysis.dictionary;
     let noun_form = analysis.words[noun_index].form.as_str();
     if UNITS.contains(&noun_form) {
+        return;
+    }
+    // "zwou Slow Motions": another capitalised word right after, the noun is a multi-word name
+    if analysis.next_is_adjacent(noun_index) && starts_upper(&analysis.words[noun_index + 1].text) {
         return;
     }
     let entries = dictionary.entry_indices(analysis.words[noun_index].record);

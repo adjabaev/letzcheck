@@ -18,9 +18,12 @@ for ev, el in ET.iterparse(D + "art/new_lod-art.xml"):
     plural, tr = [], {"fr": [], "en": [], "de": [], "pt": []}
     ms = el.find("microStructure")
     if ms is not None:
-        for inf in ms.findall("inflection"):
+        # Plurals sit under the entry, or under each grammaticalUnit when the meanings differ
+        # (Hond: Hënn, Honn): gather them all, in order.
+        for inf in ms.iter("inflection"):
             if inf.get("type") == "plural":
-                plural = [clean(f.text) for f in inf.findall("form") if clean(f.text)]
+                for f in inf.findall("form"):
+                    if clean(f.text) and clean(f.text) not in plural: plural.append(clean(f.text))
     for m in el.iter("meaning"):
         for tl in m.findall("targetLanguage"):
             lg, t = tl.get("lang"), tl.find("translation")

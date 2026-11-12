@@ -186,6 +186,7 @@ string means "none"):
 | n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop |
 | plural | `plural_determiner` | noun, lemma (when it differs), fixed, current | singular determiner before a plural |
 | plural | `number_plural` | number, plural | a number before a singular noun |
+| plural | `number_gender_plural` | noun, gender, plural, fixed, current | zwee / zwou of the wrong gender before a singular noun: one fix for both words ("zwee Kaz" → "zwou Kazen") |
 | gender | `gender_determiner` | noun, gender (`M` `F` `N`), fixed, current | determiner of the wrong gender |
 | verb | `verb_form` | pronoun, verb, lemma, expected | wrong person, with the right form |
 | verb | `verb_mismatch` | pronoun, verb | wrong person, no form to offer |
