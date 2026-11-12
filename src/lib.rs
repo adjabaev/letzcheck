@@ -259,18 +259,25 @@ fn in_set(set: &str, text: &str) -> bool {
 /// when the rule does not decide (an unknown Y word, a digit…). Y depends on how it sounds:
 /// "en Yttrium" (vowel) but "e Yoga" (the consonant [j]), taken from the LOD pronunciation.
 fn keeps_n_before(dictionary: &Dictionary, next: &Word, next_initial: &str) -> Option<bool> {
+    // The LOD's pronunciation first, where it differs from the spelling (Job, Gin, Yoga, User):
+    // only when every entry of the word agrees.
+    // The sound is the lemma's: a form that does not start like it ("gegendert" for "genderen")
+    // keeps to its letters.
+    let start: String = next.normalized.to_lowercase().chars().take(3).collect();
+    let entries = dictionary.entry_indices(next.record);
+    let onsets: Vec<u8> = entries
+        .iter()
+        .map(|&i| &dictionary.entries[i])
+        .filter(|entry| entry.lemma.to_lowercase().starts_with(&start))
+        .map(|entry| entry.y_onset)
+        .collect();
+    if let Some(&first) = onsets.first() {
+        if first != 0 && onsets.iter().all(|&onset| onset == first) {
+            return Some(first == b'v');
+        }
+    }
     if next_initial == "y" {
-        let entries = dictionary.entry_indices(next.record);
-        let onsets: Vec<u8> = entries
-            .iter()
-            .map(|&i| dictionary.entries[i].y_onset)
-            .collect();
-        return match onsets.first() {
-            Some(&first) if first != 0 && onsets.iter().all(|&onset| onset == first) => {
-                Some(first == b'v')
-            }
-            _ => None,
-        };
+        return None;
     }
     if !next_initial.is_empty() && in_set(N_KEEP_INITIALS, next_initial) {
         Some(true)
@@ -2239,10 +2246,13 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                 if adjacent && keeps_n_before(dictionary, next, &next_initial) == Some(true) =>
             {
                 // What keeps the n: one of n d t z h, or a vowel.
+                // ("sound": the letter does not keep the n, the LOD's pronunciation does: Job, Chip)
                 let before = if matches!(next_initial.as_str(), "n" | "d" | "t" | "z" | "h") {
                     next_initial.as_str()
-                } else {
+                } else if in_set("aeiouäëéèêöüàâîôû", &next_initial) {
                     "vowel"
+                } else {
+                    "sound"
                 };
                 issues.push(Issue::new(
                     index,
@@ -2574,6 +2584,39 @@ fn ech_du_without_form(analysis: &Analysis, index: usize, full: &str) -> bool {
         })
 }
 
+/// A verb form proposed as a fix, with the n-rule applied to it: "Ech hutt gëschter" becomes
+/// "Ech hu gëschter" in one step, not "hunn" and then a second remark for the n.
+fn fit_n(analysis: &Analysis, verb_index: usize, wanted: &str) -> String {
+    let dictionary = analysis.dictionary;
+    if analysis.next_is_adjacent(verb_index) {
+        let next = &analysis.words[verb_index + 1];
+        // Same exceptions as the n-rule: before "si", "se", "seng…" the LOD keeps the n too.
+        if keeps_n_before(dictionary, next, &initial(&next.normalized)) == Some(false)
+            && !is_s_function_word(&next.normalized.to_lowercase())
+        {
+            if let Some(&short) = dictionary.n_dropped.get(wanted) {
+                if dictionary.valid_record(short).is_some() {
+                    return short.to_string();
+                }
+            }
+        }
+    }
+    wanted.to_string()
+}
+
+/// The persons a subject pronoun stands for, as a mask (bit 0 ech … bit 5 si).
+fn pronoun_persons(word: &str) -> u32 {
+    match word {
+        "ech" => 1,
+        "du" | "de" | "s" => 1 << 1,
+        "hien" | "hie" | "hatt" | "et" | "en" => 1 << 2,
+        "si" | "se" => (1 << 2) | (1 << 5),
+        "mir" | "mer" => 1 << 3,
+        "dir" | "der" => 1 << 4,
+        _ => 0,
+    }
+}
+
 /// "ech" / "du" followed by a verb form of another person: "ech spillt" → "ech spillen".
 fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     let dictionary = analysis.dictionary;
@@ -2593,6 +2636,10 @@ fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     let Some(&(persons, wild)) = dictionary.person_masks.get(verb.form.as_str()) else {
         return;
     };
+    // A form that may be an infinitive or a participle ("wild") can follow "ech" / "du" after an
+    // inverted verb ("Wëlls du kommen?"); at the start of a sentence the next word is the finite
+    // verb: "Ech wësse net" → "Ech weess net".
+    let wild = wild && !analysis.starts[index].loose;
     if wild || persons & (1 << person) != 0 || !analysis.only_part_of_speech(verb, "VRB") {
         return;
     }
@@ -2605,7 +2652,7 @@ fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     let fix = match conjugation {
         Some((forms, lemma)) => {
             let wanted = first_form(forms[2 + person]);
-            (!wanted.is_empty()).then_some((wanted, lemma))
+            (!wanted.is_empty()).then(|| (fit_n(analysis, index + 1, wanted), lemma))
         }
         None => None,
     };
@@ -2620,7 +2667,7 @@ fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
                     ("expected", &format!("{lowercase} {wanted}")),
                 ]),
             ),
-            vec![wanted.to_string()],
+            vec![wanted],
         ),
         None => (
             (
@@ -2676,14 +2723,17 @@ fn check_pronoun_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>
     // mir / dir are often datives ("Mir ass kal", "Dir ginn d'Aen op"): 3rd-person verbs are fine.
     let dative = may_be_dative && persons & ((1 << 2) | (1 << 5)) != 0;
     // "Mir si mer…": a subject pronoun after the verb means the first word is not the subject.
+    // Only when the verb agrees with that second pronoun: "Hien hutt mer…" is still wrong.
     let inverted = analysis.next_is_adjacent(index + 1)
-        && SUBJECT_PRONOUNS.contains(&analysis.lowercase(index + 2).as_str());
+        && SUBJECT_PRONOUNS.contains(&analysis.lowercase(index + 2).as_str())
+        && pronoun_persons(&analysis.lowercase(index + 2)) & persons != 0;
     if dative || inverted || persons & allowed != 0 {
         return;
     }
     let forms: Vec<(String, StaticStr)> = targets
         .iter()
         .filter_map(|&person| analysis.present_form(verb, person))
+        .map(|(wanted, lemma)| (fit_n(analysis, index + 1, &wanted), lemma))
         .collect();
     let (rule, values) = match forms.first() {
         Some((wanted, lemma)) => (

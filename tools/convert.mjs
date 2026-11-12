@@ -8,7 +8,8 @@
 // Layout (all lines end with \n, fields are tab-separated):
 //   LETZ3 <version> <nE> <nF> <nA> <nP> <nC> <nS> <nD> <spellVersion>
 //   nE lines  id lemma pos gender level fr en plural yOnset de pt   (entry index = line order;
-//             yOnset: "j" or "v" for a word starting with Y pronounced [j] or as a vowel;
+//             yOnset: "v" when the n stays before the word's first sound although its first letter
+//             says otherwise (Job [dʒ], Yttrium), "j" when it drops (Yoga, User); "" otherwise;
 //             fr en de pt: the LOD translations, "; "-separated)
 //   nF lines  form ids nfull flag                          (unchanged from lod.json "f")
 //   nA lines  attested word                                (unchanged from "a")

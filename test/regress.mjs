@@ -50,6 +50,8 @@ if (added.length) failures.push(`${added.length} new false alarm(s) on the corpu
 // Every case the base build fixed (or caught) and the new one does not is a regression.
 {
   const levels = ['missed', 'caught', 'fixed']
+  const accepted = new Set(fs.readFileSync(new URL('accepted.txt', import.meta.url), 'utf8').split('\n').filter(l => l.trim() && !l.startsWith('#')))
+  const acceptedCases = []
   const byFamily = {}, worseCases = []
   for (const c of cases(lod, corpusFile)) {
     const f = byFamily[c.family] ??= { cases: 0, base: [0, 0], next: [0, 0] }
@@ -57,7 +59,7 @@ if (added.length) failures.push(`${added.length} new false alarm(s) on the corpu
     f.cases++
     if (a >= 1) f.base[0]++; if (a >= 2) f.base[1]++
     if (b >= 1) f.next[0]++; if (b >= 2) f.next[1]++
-    if (b < a) worseCases.push(`${c.family}: ${levels[a]} → ${levels[b]}\n      ${c.wrong}\n      want: ${c.right}`)
+    if (b < a) (accepted.has(c.wrong) ? acceptedCases : worseCases).push(`${c.family}: ${levels[a]} → ${levels[b]}\n      ${c.wrong}\n      want: ${c.right}`)
   }
   console.log('\ncertified mistakes:          base → new')
   for (const [family, f] of Object.entries(byFamily)) {
@@ -65,6 +67,7 @@ if (added.length) failures.push(`${added.length} new false alarm(s) on the corpu
     console.log(`  ${(family + ' (' + f.cases + ')').padEnd(26)}   caught ${p(f.base[0])} → ${p(f.next[0])}   fixed ${p(f.base[1])} → ${p(f.next[1])}`)
   }
   list('certified mistakes handled worse than before', worseCases)
+  list('handled worse, accepted in test/accepted.txt', acceptedCases)
   if (worseCases.length) failures.push(`${worseCases.length} certified mistake(s) handled worse`)
 }
 

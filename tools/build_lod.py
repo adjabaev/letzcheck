@@ -43,14 +43,28 @@ for ev, el in ET.iterparse(D + "tab/new_lod-tab.xml"):
         past=tense("indicative/pastSimple"), cond=tense("conditional/presentSimple"))
     el.clear()
 
-# How a word starting with Y sounds, from its IPA: "j" when the Y is the consonant [j] (Yoga:
-# the n drops before it), "v" when it is a vowel (Yttrium: the n stays), "" otherwise.
-def y_onset(lemma, ipa):
-    if not lemma[:1] in ("y", "Y") or not ipa: return ""
-    sound = ipa.lstrip("ˈˌ.( ")
-    if sound.startswith("j"): return "j"
-    if sound[:1] in "aeiouyɛɪʏøœɔʊəɐæɑɒ": return "v"
-    return ""
+# How a word starts to the ear, from its IPA, where the spelling misleads: the n-rule (Eifeler
+# Regel) follows the sound. "v" when the n stays before it (a vowel or n d t z h), "j" when it
+# drops. Only where the letter cannot tell or tells wrong:
+#   c j q x y      by their sound: Chili [tʃ], Job [dʒ], Yttrium keep the n; Clown, Yoga drop it
+#   g as [dʒ]      Gin, genderen keep the n
+#   a vowel as a consonant   User [j], One-Night-Stand [w] drop it
+#   an initialism read by letter names   MS [ɛm], SA [ɛs], R-Wäert keep the n
+# An IPA [z] is a voiced s (Saach), not the letter z [ts]: it is not among the sounds that keep.
+KEEP_SOUNDS = set("aeiouyɛɪʏøœɔʊəɐæɑɒʌɜndth")
+VOWEL_LETTERS = set("aeiouäëéèêöüàâîôû")
+def onset(lemma, ipa):
+    first = lemma[:1].lower()
+    sound = (ipa or "").lstrip("ˈˌ.( ")[:2]
+    if not first or not sound: return ""
+    keeps = sound[0] in KEEP_SOUNDS
+    initialism = len(lemma) > 1 and (lemma[:2].isupper() or lemma[1] == "-") and lemma[0].isalpha()
+    if first in "cjqxy": pass
+    elif first == "g" and sound == "dʒ": pass
+    elif first in VOWEL_LETTERS and sound[0] in "jw": pass
+    elif initialism and keeps and first not in VOWEL_LETTERS and first not in "ndtzh": pass
+    else: return ""
+    return "v" if keeps else "j"
 
 # 3. Search index: every spelling of every entry
 entries, eidx = [], {}
@@ -71,7 +85,7 @@ for ev, el in ET.iterparse(D + "search/new_lod-search.xml"):
     lvl = 1 if cats & {"A1", "GWS A1"} else 2 if cats & {"A2", "GWS A2"} else 0
     plural, tr, ipa = info.get(eid, ([], {"fr": [], "en": [], "de": [], "pt": []}, ""))
     i = len(entries); eidx[eid] = i
-    entries.append([eid, lemma, pos, gen, lvl, "; ".join(tr["fr"]), "; ".join(tr["en"]), ", ".join(plural), y_onset(lemma, ipa),
+    entries.append([eid, lemma, pos, gen, lvl, "; ".join(tr["fr"]), "; ".join(tr["en"]), ", ".join(plural), onset(lemma, ipa),
                     "; ".join(tr["de"]), "; ".join(tr["pt"])])
     sp = [(clean(s.text).replace("’", "'"), s.get("reason")) for s in el.findall("spellings/spelling")]
     single = [(t, r) for t, r in sp if t and " " not in t and WORD.match(t)]
