@@ -2097,6 +2097,26 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
             let Some((first, first_record, second, second_record)) = &word.compound else {
                 return;
             };
+            // Noun + noun is how Luxembourgish makes new words ("Medezinstudent",
+            // "Gewaltzeenen"): no remark. Other splits ("Laf" + "technik", "dohi" + "gefall")
+            // are worth a look.
+            let only_nouns = |record: &FormRecord| {
+                let entries = dictionary.entry_indices(Some(*record));
+                !entries.is_empty()
+                    && entries
+                        .iter()
+                        .all(|&i| dictionary.entries[i].part_of_speech == "SUBST")
+            };
+            // ... unless a known word is one typing slip away ("Bandwonn" for "Brandwonn",
+            // "Gebuertdag" for "Gebuertsdag"): then it is more likely a typo.
+            let fixes = dictionary.suggest_spelling(&word.normalized, 3);
+            let near = fixes
+                .iter()
+                .any(|fix| one_edit_apart(&word.normalized, fix));
+            if starts_upper(text) && only_nouns(first_record) && only_nouns(second_record) && !near
+            {
+                return;
+            }
             let mut values = params(&[("word", text), ("first", first), ("second", second)]);
             add_glosses(dictionary, &mut values, &FIRST_GLOSSES, Some(*first_record));
             add_glosses(
@@ -2110,7 +2130,7 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                 category::COMPOUND,
                 "compound",
                 values,
-                dictionary.suggest_spelling(&word.normalized, 3),
+                fixes,
             );
         }
         Status::Attested => add(
