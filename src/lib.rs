@@ -1871,6 +1871,16 @@ impl<'a> Analysis<'a> {
             && self.only_part_of_speech(word, "SUBST"))
         .then_some(candidate)
     }
+    /// The next word when it is an initialism of two letters or more ("FBI", "CGDIS").
+    fn initialism_after(&self, index: usize) -> Option<usize> {
+        if !self.next_is_adjacent(index) {
+            return None;
+        }
+        let text = &self.words[index + 1].text;
+        let letters = text.chars().filter(|c| c.is_alphabetic()).count();
+        (letters > 1 && text.chars().all(|c| c.is_uppercase() || c.is_ascii_digit()))
+            .then_some(index + 1)
+    }
     /// When `word` is a present-tense form of a verb, that verb's present form for `person`
     /// (0 ech … 5 si) and the verb's lemma.
     fn present_form(&self, word: &Word, person: usize) -> Option<(String, StaticStr)> {
@@ -3160,7 +3170,11 @@ fn check_contraction(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     if !analysis.next_is_adjacent(index) || analysis.lowercase(index + 1) != "dem" {
         return;
     }
-    let Some(noun_index) = analysis.noun_after(index + 1) else {
+    // A noun, or an initialism ("beim CGDIS", "vum LOD"): the LOD never leaves "dem" apart there.
+    let Some(noun_index) = analysis
+        .noun_after(index + 1)
+        .or_else(|| analysis.initialism_after(index + 1))
+    else {
         return;
     };
     // "vun dem Mann säin Auto": "dem" belongs to the possessive, not to the preposition
