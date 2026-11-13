@@ -1874,26 +1874,58 @@ impl<'a> Analysis<'a> {
     /// When `word` is a present-tense form of a verb, that verb's present form for `person`
     /// (0 ech … 5 si) and the verb's lemma.
     fn present_form(&self, word: &Word, person: usize) -> Option<(String, StaticStr)> {
-        let dictionary = self.dictionary;
-        let (forms, lemma) = dictionary
-            .entry_indices(word.record)
-            .iter()
-            .find_map(|&i| {
-                dictionary
-                    .conjugations
-                    .get(&(i as u32))
-                    .map(|forms| (forms, dictionary.entries[i].lemma))
-            })?;
-        let form = word.form.as_str();
-        let is_present = forms[2..8].iter().any(|cell| {
+        let (forms, lemma, cells) = best_table(self.dictionary, word)?;
+        let wanted = first_form(forms[2 + person]).to_string();
+        (cells > 0 && !wanted.is_empty()).then_some((wanted, lemma))
+    }
+}
+
+/// How many present-tense cells of a conjugation table hold the form, with or without its n
+/// ("hu" for "hunn", "komme" for "kommen").
+fn present_cells(forms: &[StaticStr; 8], form: &str) -> usize {
+    forms[2..8]
+        .iter()
+        .filter(|cell| {
             cell.split(" / ").any(|alternative| {
                 let verb = alternative.split(' ').next().unwrap_or("");
-                verb == form || format!("{verb}n") == form || format!("{verb}nn") == form
+                verb == form
+                    || verb.strip_suffix('n') == Some(form)
+                    || verb.strip_suffix("nn") == Some(form)
+                    || form.strip_suffix('n') == Some(verb)
+                    || form.strip_suffix("nn") == Some(verb)
             })
-        });
-        let wanted = first_form(forms[2 + person]).to_string();
-        (is_present && !wanted.is_empty()).then_some((wanted, lemma))
+        })
+        .count()
+}
+
+/// The conjugation table of the verb the word most likely belongs to, with its lemma and how many
+/// present cells hold the word. A form of two verbs goes with the more basic one, by the LOD's
+/// learner level (1, 2… for the core vocabulary, 0 for the rest): "seet" is "soen" (level 2)
+/// before "seeën" (0), "freet" "froen" before "freeën". Then with the one where it fills more
+/// cells.
+fn best_table<'a>(
+    dictionary: &'a Dictionary,
+    word: &Word,
+) -> Option<(&'a [StaticStr; 8], StaticStr, usize)> {
+    let form = word.form.as_str();
+    type Candidate<'t> = ((u8, usize), &'t [StaticStr; 8], StaticStr, usize);
+    let mut best: Option<Candidate> = None;
+    for &i in dictionary.entry_indices(word.record).iter() {
+        let Some(forms) = dictionary.conjugations.get(&(i as u32)) else {
+            continue;
+        };
+        let cells = present_cells(forms, form);
+        let level = match dictionary.entries[i].level {
+            0 => u8::MAX,
+            level => level,
+        };
+        // lower is better: the level, then more cells
+        let rank = (level, usize::MAX - cells);
+        if best.is_none_or(|(best_rank, ..)| rank < best_rank) {
+            best = Some((rank, forms, dictionary.entries[i].lemma, cells));
+        }
     }
+    best.map(|(_, forms, lemma, cells)| (forms, lemma, cells))
 }
 
 /// First form in a conjugation table cell: "spillen / spille" → "spillen", "ginn eran" → "ginn".
@@ -2861,12 +2893,7 @@ fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     if wild || persons & (1 << person) != 0 || !analysis.only_part_of_speech(verb, "VRB") {
         return;
     }
-    let conjugation = dictionary.entry_indices(verb.record).iter().find_map(|&i| {
-        dictionary
-            .conjugations
-            .get(&(i as u32))
-            .map(|forms| (forms, dictionary.entries[i].lemma))
-    });
+    let conjugation = best_table(dictionary, verb).map(|(forms, lemma, _)| (forms, lemma));
     let fix = match conjugation {
         Some((forms, lemma)) => {
             let wanted = first_form(forms[2 + person]);
