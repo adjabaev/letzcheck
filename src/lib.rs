@@ -2227,6 +2227,86 @@ fn lower_reads_as_noun(dictionary: &Dictionary, form: &str) -> bool {
     })
 }
 
+/// Prepositions after which a capitalised adjective or infinitive is a noun: "vu Klengem un",
+/// "zënter Kuerzem", "mat Programméieren", "als Éischten".
+const NOUN_PREPOSITIONS: [&str; 22] = [
+    "vu", "vun", "zënter", "zanter", "viru", "virun", "mat", "bei", "als", "u", "un", "no", "ouni",
+    "fir", "iwwer", "iwwerem", "ënner", "mam", "duerch", "géint", "deene", "där",
+];
+
+/// A word that can come before the noun in a noun phrase: a determiner, a preposition with or
+/// without its article, a number, "meescht", or a lower-case inflected adjective ("no
+/// stonnelaangem Waarden").
+fn noun_phrase_word(analysis: &Analysis, index: usize) -> bool {
+    let lower = analysis.lowercase(index);
+    let lower = lower.as_str();
+    if NOUN_MAKERS.contains(&lower)
+        || NOUN_PREPOSITIONS.contains(&lower)
+        || NUMBER_WORDS.contains(&lower)
+        || matches!(
+            lower,
+            "meescht" | "des" | "dës" | "dësem" | "dëser" | "dësen" | "dëse"
+        )
+    {
+        return true;
+    }
+    let word = &analysis.words[index];
+    !starts_upper(&word.text)
+        && analysis.only_part_of_speech(word, "ADJ")
+        && ["e", "en", "em", "er", "es"]
+            .iter()
+            .any(|ending| lower.ends_with(ending))
+}
+
+/// A capitalised noun of the LOD one typing slip away (a letter missing, added, replaced or two
+/// swapped): "Kache" for "Knache", "Aler" for "Alter" are more likely typos than nouns made from
+/// "kachen" or "al".
+fn near_a_noun(dictionary: &Dictionary, word: &str) -> bool {
+    dictionary
+        .suggest_spelling(word, 6)
+        .iter()
+        .any(|candidate| {
+            starts_upper(candidate)
+                && one_edit_apart(word, candidate)
+                && dictionary.valid_record(candidate).is_some_and(|record| {
+                    dictionary
+                        .entry_indices(Some(record))
+                        .iter()
+                        .all(|&i| dictionary.entries[i].part_of_speech == "SUBST")
+                })
+        })
+}
+
+fn one_edit_apart(a: &str, b: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a == b || a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    let start = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let end = a[start..]
+        .iter()
+        .rev()
+        .zip(b[start..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (rest_a, rest_b) = (a.len() - start - end, b.len() - start - end);
+    // one letter replaced, added or missing, or two neighbours swapped
+    rest_a.max(rest_b) <= 1
+        || (rest_a == 2 && rest_b == 2 && a[start] == b[start + 1] && a[start + 1] == b[start])
+}
+
+/// The form is the entry's past participle with an adjective ending: "Beschëllegten",
+/// "Blesséierten" (used as nouns).
+fn inflected_participle(dictionary: &Dictionary, entry: usize, form: &str) -> bool {
+    let Some(table) = dictionary.conjugations.get(&(entry as u32)) else {
+        return false;
+    };
+    table[1].split(" / ").any(|participle| {
+        form.strip_prefix(participle)
+            .is_some_and(|ending| matches!(ending, "e" | "en" | "em" | "er" | "es"))
+    })
+}
+
 /// A capitalised word the LOD only has in lower case, used as a noun: after a determiner or a
 /// preposition with its article ("eisen Eelsten", "d'Faaschten", "beim Schwammen"), or as the
 /// first part of a name before a capitalised noun ("Zweete Weltkrich", "Gréng Zeiselen").
@@ -2247,7 +2327,9 @@ fn used_as_noun(analysis: &Analysis, index: usize) -> bool {
                 "ADJ" => entry.lemma != form,
                 "NB" => true,
                 "VRB" => {
-                    entry.lemma == form || dictionary.n_dropped.get(entry.lemma) == Some(&form)
+                    entry.lemma == form
+                        || dictionary.n_dropped.get(entry.lemma) == Some(&form)
+                        || inflected_participle(dictionary, i, form)
                 }
                 _ => false,
             }
@@ -2255,10 +2337,16 @@ fn used_as_noun(analysis: &Analysis, index: usize) -> bool {
     if !nominal {
         return false;
     }
-    let after_maker = index > 0
-        && (is_blank(analysis.gap_after(index - 1)) || words[index - 1].clitic)
-        && NOUN_MAKERS.contains(&analysis.lowercase(index - 1).as_str());
-    if after_maker {
+    let joined = index > 0 && (is_blank(analysis.gap_after(index - 1)) || words[index - 1].clitic);
+    // After a determiner the noun reading is clear. After a preposition or an adjective it is
+    // weaker: a LOD noun one typing slip away wins ("Kache" for "Knache", "Aler" for "Alter").
+    if joined && NOUN_MAKERS.contains(&analysis.lowercase(index - 1).as_str()) {
+        return true;
+    }
+    if joined
+        && noun_phrase_word(analysis, index - 1)
+        && !near_a_noun(dictionary, &words[index].normalized)
+    {
         return true;
     }
     analysis.next_is_adjacent(index)
