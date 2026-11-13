@@ -18,7 +18,8 @@ people trust a checker only as long as it is right when it speaks.
    against the last commit (`test/regress.mjs`), and it fails on any new remark on the corpus, any
    certified mistake caught or fixed before and not now, or any typo caught or ranked worse. The
    certified mistakes (`test/mutations.mjs`) are LOD sentences with one mistake the rule leaves
-   no doubt about: n-rule, verb agreement, determiner gender, plural after a number (about 120,000); the LOD sentence is the expected correction.
+   no doubt about: n-rule, verb agreement, determiner gender, plural after a number, accents
+   (about 126,000); the LOD sentence is the expected correction.
    A regression accepted on purpose goes in `test/accepted.txt`, with its reason. CI runs the same against the previous commit. For details,
    `make corpus BASE=…` compares your build with the previous one
    on 54,996 correct sentences from the LOD. Every new remark it lists is a false alarm to fix. If

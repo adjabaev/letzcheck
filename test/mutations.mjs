@@ -26,6 +26,12 @@
 //                 "zwee Hënn" → "zwee Hond". Only nouns whose singular the LOD never writes after a
 //                 number ("dräi Mol", "zwee Liter": not cases).
 //
+//   accent_wrong  one accent of a word of the sentence is dropped ("Schnéi" → "Schnei"), only when
+//                 the bare form is no LOD form in any case and the spellchecker.lu dictionary (run
+//                 by hunspell) rejects it too ("Bänk" → "Bank" is a word: not a case). One per
+//                 sentence, in one sentence out of seven.
+//                 Left out when hunspell is not installed.
+//
 // The n-less form of a word comes from the LOD inflections (lod.txt forms marked "n"). Letters
 // whose sound may differ from their spelling (c, j, q, x, y: "Job", "Yoga", "Chili") are left out.
 //
@@ -34,6 +40,8 @@
 //   prints, per family, the cases where a remark covers the broken word ("caught") and where
 //   applying the first fix of those remarks gives back the LOD sentence ("fixed").
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
 
 const KEEP = new Set([...'aeiouäëéèêöüàâîôûndtzh'])
 const DROP = new Set([...'bfgklmprsvw'])
@@ -200,6 +208,42 @@ export function cases(lodFile, corpusFile) {
       out.push({ family: 'gender_wrong', wrong, right, start: at, end: at + shown.length + glue.length + noun.length })
       break
     }
+  }
+  // Accents: the bare form must be no word at all.
+  const known = new Set()
+  for (const line of fs.readFileSync(lodFile, 'utf8').split('\n')) {
+    const f = line.split('\t')
+    if (f.length === 4 && f[0]) known.add(f[0].toLowerCase())
+  }
+  const BARE = { 'é': 'e', 'ë': 'e', 'è': 'e', 'ê': 'e', 'ä': 'a', 'à': 'a', 'â': 'a', 'ö': 'o', 'ô': 'o', 'ü': 'u', 'û': 'u', 'î': 'i' }
+  const accentCandidates = []
+  // A fixed sample (one sentence in 7): misspelt words make the engine search for suggestions,
+  // which is slow over tens of thousands of cases.
+  for (const [n, right] of sentences.entries()) {
+    if (n % 7) continue
+    for (const m of right.matchAll(word)) {
+      if (m.index > 0 && /['’´-]/.test(right[m.index - 1])) continue
+      const w = m[0], at = [...w].findIndex(ch => BARE[ch.toLowerCase()])
+      if (at < 0 || w.length < 3) continue
+      const chars = [...w], ch = chars[at]
+      chars[at] = ch === ch.toLowerCase() ? BARE[ch] : BARE[ch.toLowerCase()].toUpperCase()
+      const bare = chars.join('')
+      if (known.has(bare.toLowerCase())) continue
+      accentCandidates.push({ right, start: m.index, word: w, bare })
+      break
+    }
+  }
+  const dict = path.join(path.dirname(lodFile), 'spell', 'lb_LU')
+  let rejected = null
+  try {
+    const words = [...new Set(accentCandidates.map(c => c.bare))]
+    rejected = new Set(execFileSync('hunspell', ['-l', '-d', dict], { input: words.join('\n'), maxBuffer: 64 << 20 }).toString().split('\n'))
+  } catch (e) {
+    process.stderr.write('accent_wrong left out: hunspell not available\n')
+  }
+  if (rejected) for (const c of accentCandidates) {
+    if (!rejected.has(c.bare)) continue
+    out.push({ family: 'accent_wrong', wrong: c.right.slice(0, c.start) + c.bare + c.right.slice(c.start + c.word.length), right: c.right, start: c.start, end: c.start + c.bare.length })
   }
   return out
 }
