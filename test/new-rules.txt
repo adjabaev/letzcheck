@@ -43,3 +43,6 @@ Hien hutt eng Sammlung vun ale mechaneschen Aueren. => Hien huet eng Sammlung vu
 Déi zwee Hond haten sech anenee verbass. => Déi zwee Hënn haten sech anenee verbass.
 Ech seet Iech Merci fir Är wäertvoll Hëllef! => Ech soen Iech Merci fir Är wäertvoll Hëllef!
 Hien hu säin Hiem mat Tomatenzopp besabbelt. => Hien huet säin Hiem mat Tomatenzopp besabbelt.
+Et kascht nénghonnertmilliardenfënnefhonnertmilliounenzweehonnertdausendhonnert Euro. => Et kascht nénghonnert Milliarde fënnefhonnert Milliounen zweehonnertdausendhonnert Euro.
+Et kascht zweemilliarden Euro. => Et kascht zwou Milliarden Euro.
+Et sinn zweemilliounenvéierhonnert Leit. => Et sinn zwou Millioune véierhonnert Leit.

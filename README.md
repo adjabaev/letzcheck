@@ -180,7 +180,7 @@ string means "none"):
 | compound | `compound` | word, first, first_fr/en/de/pt, second, second_fr/en/de/pt | looks like first + second (with their LOD translations) |
 | unlisted | `unlisted_attested` | word | no entry, but used in LOD examples |
 | spelling | `number_spelling` | word, expected, value | a number in words with wrong accents (*uechtzenghonnert…* → *uechtzénghonnert…*, 1815) |
-| spelling | `number_split` | word, expected, value | millions written together: *Millioun(en)* stands apart |
+| spelling | `number_split` | word, expected, value | millions or billions written together: *Millioun(en)* and *Milliard(en)* stand apart, with the n-rule and *zwou* inside the fix |
 | proper_noun | `proper_noun` | word, close?, close_source? | unknown, capitalised: maybe a name |
 | capital | `capital_unexpected` | word, lower, gloss_fr/en/de/pt | the LOD has it in lower case only |
 | capital | `capital_missing` | noun, gloss_fr/en/de/pt | a noun written in lower case |

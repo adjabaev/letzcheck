@@ -1353,51 +1353,86 @@ fn number_below_million(text: &str) -> Option<NumberReading> {
     })
 }
 
+/// The n-rule inside a number written out: a final n stays before a vowel or n, d, t, z, h.
+fn number_keeps_n(next: &str) -> bool {
+    next.chars()
+        .next()
+        .is_some_and(|c| "aeiouäëéöüyndtzh".contains(c.to_lowercase().next().unwrap_or(c)))
+}
+
+/// Count of millions or billions, then its noun: "eng Millioun", "zwou Milliounen" (the noun is
+/// feminine), "siwe Milliarden" (n-rule before M). The noun's own n is fitted by the caller.
+fn count_and_noun(count: &NumberReading, singular: &str, plural: &str) -> Vec<String> {
+    let head = match count.value {
+        1 => "eng".to_string(),
+        2 => "zwou".to_string(),
+        _ => match count.spelling.strip_suffix("siwen") {
+            Some(start) => format!("{start}siwe"),
+            None => count.spelling.clone(),
+        },
+    };
+    let noun = if count.value == 1 { singular } else { plural };
+    vec![head, noun.to_string()]
+}
+
+/// `text` split at the first of `keywords` (folded) found in it, longest first.
+fn split_at_any<'a>(text: &'a str, keywords: &[&str]) -> Option<(&'a str, &'a str)> {
+    keywords.iter().find_map(|k| split_at_keyword(text, k))
+}
+
+/// The count before "millioun" or "milliard": below a thousand, "eng" read as one.
+fn number_count(before: &str) -> Option<NumberReading> {
+    if before.is_empty() || before == "eng" {
+        return Some(NumberReading {
+            value: 1,
+            spelling: "eng".to_string(),
+        });
+    }
+    number_below_thousand(before)
+}
+
 /// A number written in one word, whatever its accents. The spelling is the right one: the word
-/// with its accents, or, for millions written together ("…milliounvéierhonnert…"), the separate
-/// form ("… Milliounen véierhonnert…"). Single pieces ("zwee", "honnert") are LOD words already.
+/// with its accents, or, for millions and billions written together
+/// ("…milliardenfënnefhonnertmilliounen…"), the separate form ("… Milliarde fënnefhonnert
+/// Milliounen …"), with the n-rule inside it. Single pieces ("zwee", "honnert") are LOD words.
 fn read_number(word: &str) -> Option<NumberReading> {
     let text = fold_number(word);
     if let Some(found) = number_below_million(&text) {
         return Some(found);
     }
-    let keyword = if text.contains("milliounen") {
-        "milliounen"
-    } else {
-        "millioun"
-    };
-    let (before, after) = split_at_keyword(&text, keyword)?;
-    let millions = if before.is_empty() {
-        NumberReading {
-            value: 1,
-            spelling: "eng".to_string(),
+    let mut value = 0u64;
+    let mut parts: Vec<String> = Vec::new();
+    // Billions, then millions, then the rest below a million.
+    let mut rest: &str = &text;
+    if let Some((before, after)) = split_at_any(rest, &["milliarden", "milliarde", "milliard"]) {
+        let count = number_count(before)?;
+        value += count.value * 1_000_000_000;
+        parts.extend(count_and_noun(&count, "Milliard", "Milliarden"));
+        rest = after;
+    }
+    if let Some((before, after)) = split_at_any(rest, &["milliounen", "millioune", "millioun"]) {
+        let count = number_count(before)?;
+        value += count.value * 1_000_000;
+        parts.extend(count_and_noun(&count, "Millioun", "Milliounen"));
+        rest = after;
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    if !rest.is_empty() {
+        let below = number_below_million(rest)?;
+        value += below.value;
+        parts.push(below.spelling);
+    }
+    // The n-rule between the parts: "Milliarde fënnefhonnert", "Milliounen zweehonnert".
+    for i in 0..parts.len() - 1 {
+        if parts[i].ends_with("en") && !number_keeps_n(&parts[i + 1]) {
+            parts[i].pop();
         }
-    } else {
-        number_below_thousand(&before.replace("eng", "een"))?
-    };
-    let rest = if after.is_empty() {
-        None
-    } else {
-        Some(number_below_million(after)?)
-    };
-    let noun = if millions.value == 1 {
-        "Millioun"
-    } else {
-        "Milliounen"
-    };
-    let head = if millions.value == 1 {
-        "eng".to_string()
-    } else {
-        millions.spelling
-    };
-    let mut spelling = format!("{head} {noun}");
-    if let Some(rest) = &rest {
-        spelling.push(' ');
-        spelling.push_str(&rest.spelling);
     }
     Some(NumberReading {
-        value: millions.value * 1_000_000 + rest.map_or(0, |rest| rest.value),
-        spelling,
+        value,
+        spelling: parts.join(" "),
     })
 }
 
