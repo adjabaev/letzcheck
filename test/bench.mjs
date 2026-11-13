@@ -9,6 +9,8 @@
 //                 seeded: is it caught, is the right word the first fix, is it among the first four
 //   grammar       the wrong sentences of test/new-rules.txt that are not spelling mistakes (every
 //                 word exists; the mistake is the n-rule, gender, agreement…)
+//   certified     LOD sentences with one certain mistake (test/mutations.mjs), last build only:
+//                 caught, and fixed back to the LOD sentence by the first fix
 //   speed         time to analyse the whole corpus with the last build
 //   speller       src/spell.rs against hunspell, word by word (as test/spell.mjs)
 //
@@ -149,6 +151,25 @@ const grammar = {
     .concat([{ label: 'hunspell', caught: hGrammar.filter(f => f.length).length }])
 }
 
+// ---- certified mistakes (test/mutations.mjs) ----
+// LOD sentences with one mistake the rule leaves no doubt about; the LOD sentence is the answer.
+// Measured on the last build only (older builds read another data layout). hunspell checks words
+// one by one: of these families it can only see the accents.
+const { cases: certifiedCases, score: certifiedScore } = await import('./mutations.mjs')
+const { load: loadEngine, remarks: engineRemarks, applyFirstFixes } = await import('./engine.mjs')
+const lastRun = await loadEngine(last.wasm, last.lod)
+const families = {}
+for (const c of certifiedCases(last.lod, 'data/corpus.txt')) {
+  const f = families[c.family] ??= { cases: 0, caught: 0, fixed: 0 }
+  const r = certifiedScore(lastRun, c, engineRemarks, applyFirstFixes)
+  f.cases++; if (r >= 1) f.caught++; if (r >= 2) f.fixed++
+}
+const certified = {
+  cases: Object.values(families).reduce((n, f) => n + f.cases, 0),
+  families: Object.entries(families).map(([family, f]) => ({ family, cases: f.cases, caughtPercent: pct(f.caught, f.cases), fixedPercent: pct(f.fixed, f.cases) })),
+}
+certified.fixedPercent = pct(Object.values(families).reduce((n, f) => n + f.fixed, 0), certified.cases)
+
 // ---- speed (last build) ----
 const wordCount = corpus.reduce((n, s) => n + (s.match(/\p{L}+/gu) || []).length, 0)
 const t0 = performance.now(); for (const s of corpus) last.run(s); const ms = performance.now() - t0
@@ -161,7 +182,7 @@ const result = {
   date: new Date().toISOString().slice(0, 10),
   engine: process.env.ENGINE_VERSION || '',
   lod: lodHead[1], spellchecker: lodHead[lodHead.length - 1] || '',
-  falseAlarms, typos, grammar, speed, speller
+  falseAlarms, typos, grammar, certified, speed, speller
 }
 const text = JSON.stringify(result, null, 2) + '\n'
 if (outFile) fs.writeFileSync(outFile, text); else process.stdout.write(text)

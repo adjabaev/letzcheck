@@ -101,6 +101,8 @@ through the same tests:
 - **typos**: 2,000 corpus words with one typo each (a letter missing, swapped, replaced or added;
   fixed seed): is it caught, is the right word the first fix, is it among the first four;
 - **grammar**: the wrong sentences of `test/new-rules.txt` where every word exists;
+- **certified**: the certified mistakes of `test/mutations.mjs` (LOD sentences with one mistake the
+  rule leaves no doubt about), per family: cases, caught, and fixed back to the LOD sentence;
 - **speed** of the analysis, and the **speller agreement** of `make spell`.
 
 [letz.arby.be](https://letz.arby.be/#quality) draws its quality section from that JSON.
