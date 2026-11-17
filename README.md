@@ -21,11 +21,10 @@ open data under CC0:
 This repository ships neither: `make data` downloads them and builds the engine's index.
 
 ```
-$ node examples/check.mjs "Ech hunn ee Fro. Hien spillen zu dem Bësch."
+$ node examples/check.mjs "Ech hunn ee Fro. Hien spillen am Bësch."
 warn ee       gender/gender_determiner {"noun":"Fro","gender":"F","fixed":"eng Fro","current":"ee Fro"}  → eng
 warn Hien     n_rule/n_drop {"next":"spillen","initial":"s","sound":"","fixed":"Hie"}  → Hie
 err  spillen  verb/verb_form {"pronoun":"hien","verb":"spillen","lemma":"spillen","expected":"hien spillt"}  → spillt
-warn zu       contraction/contraction {"phrase":"zu dem","contracted":"zum"}  → zum
 ```
 
 The engine writes no sentences. Each remark is a rule key with named parameters and the fixes;
@@ -167,7 +166,7 @@ number(wi) -> out                    the value of word wi when it is a number in
 when only the spellchecker.lu dictionary has it; `close` is the first fix (absent without fixes).
 
 Categories: `spelling`, `compound`, `unlisted`, `proper_noun`, `capital`, `n_rule`, `plural`,
-`gender`, `verb`, `contraction`, `typography`. Rules and their parameters (all strings; an empty
+`gender`, `verb`, `typography`. Rules and their parameters (all strings; an empty
 string means "none"):
 
 | Category | Rule | Parameters | When |
@@ -195,7 +194,6 @@ string means "none"):
 | verb | `verb_form` | pronoun, verb, lemma, expected | wrong person, with the right form |
 | verb | `verb_mismatch` | pronoun, verb | wrong person, no form to offer |
 | verb | `ze_infinitive` | verb | *ze* + something else than the infinitive |
-| contraction | `contraction` | phrase, contracted | *vun dem* → *vum* |
 | typography | `repeated_word` | word | the same word twice |
 | typography | `space_before` | mark | a space before `, . ; : ? !` |
 

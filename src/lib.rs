@@ -1696,7 +1696,6 @@ mod category {
     pub const PLURAL: &str = "plural";
     pub const GENDER: &str = "gender";
     pub const VERB: &str = "verb";
-    pub const CONTRACTION: &str = "contraction";
     pub const TYPOGRAPHY: &str = "typography";
 }
 
@@ -1819,13 +1818,9 @@ const UNITS: [&str; 30] = [
     "Joer",
     "Pabeier",
 ];
-/// "an" is left out: it is also the conjunction "and" (tëschent X an dem Y).
-const CONTRACTIONS: [(&str, &str); 4] =
-    [("vun", "vum"), ("zu", "zum"), ("bei", "beim"), ("op", "um")];
 const SUBJECT_PRONOUNS: [&str; 14] = [
     "ech", "du", "de", "hien", "hatt", "si", "se", "et", "mir", "mer", "dir", "der", "en", "s",
 ];
-const POSSESSIVES: [&str; 6] = ["säi", "säin", "seng", "hir", "hiren", "hire"];
 const ABBREVIATIONS: [&str; 14] = [
     "asw", "bzw", "etc", "ca", "resp", "vgl", "nr", "dr", "hr", "fr", "st", "z", "u", "mme",
 ];
@@ -1905,16 +1900,6 @@ impl<'a> Analysis<'a> {
             && starts_upper(&word.text)
             && self.only_part_of_speech(word, "SUBST"))
         .then_some(candidate)
-    }
-    /// The next word when it is an initialism of two letters or more ("FBI", "CGDIS").
-    fn initialism_after(&self, index: usize) -> Option<usize> {
-        if !self.next_is_adjacent(index) {
-            return None;
-        }
-        let text = &self.words[index + 1].text;
-        let letters = text.chars().filter(|c| c.is_alphabetic()).count();
-        (letters > 1 && text.chars().all(|c| c.is_uppercase() || c.is_ascii_digit()))
-            .then_some(index + 1)
     }
     /// When `word` is a present-tense form of a verb, that verb's present form for `person`
     /// (0 ech … 5 si) and the verb's lemma.
@@ -2977,7 +2962,7 @@ fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     ));
 }
 
-// ---------- second pass (Nov 2026): agreement, numbers, contractions, ze, typography ----------
+// ---------- second pass (Nov 2026): agreement, numbers, ze, typography ----------
 // Each rule was measured on the LOD example sentences (the test corpus) to keep false alarms rare.
 
 /// A subject pronoun at the start of a sentence, then a finite verb in the wrong person:
@@ -3190,48 +3175,6 @@ fn check_number_plural(
         params(&[("number", label), ("plural", plural)]),
         vec![plural.to_string()],
     ));
-}
-
-/// Preposition + "dem" before a noun: "vun dem Bësch" → "vum Bësch".
-fn check_contraction(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
-    let words = analysis.words;
-    let lowercase = analysis.lowercase(index);
-    let Some(&(_, contracted)) = CONTRACTIONS
-        .iter()
-        .find(|(preposition, _)| *preposition == lowercase)
-    else {
-        return;
-    };
-    if !analysis.next_is_adjacent(index) || analysis.lowercase(index + 1) != "dem" {
-        return;
-    }
-    // A noun, or an initialism ("beim CGDIS", "vum LOD"): the LOD never leaves "dem" apart there.
-    let Some(noun_index) = analysis
-        .noun_after(index + 1)
-        .or_else(|| analysis.initialism_after(index + 1))
-    else {
-        return;
-    };
-    // "vun dem Mann säin Auto": "dem" belongs to the possessive, not to the preposition
-    let possessive = analysis.next_is_adjacent(noun_index)
-        && POSSESSIVES.contains(&analysis.lowercase(noun_index + 1).as_str());
-    if possessive {
-        return;
-    }
-    let text = words[index].text.as_str();
-    let phrase = analysis.slice(words[index].start, words[index + 1].end);
-    let contracted = keep_case(text, contracted);
-    issues.push(
-        Issue::new(
-            index,
-            Severity::Warning,
-            category::CONTRACTION,
-            "contraction",
-            params(&[("phrase", &phrase), ("contracted", &contracted)]),
-            vec![contracted],
-        )
-        .ending_at(analysis.utf16_offsets[words[index + 1].end]),
-    );
 }
 
 /// "ze" + finite verb: "ze spillt" → "ze spillen".
@@ -3472,7 +3415,6 @@ fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
     for index in 0..words.len() {
         check_pronoun_verb(&analysis, index, &mut issues);
         check_number_word(&analysis, index, &mut issues);
-        check_contraction(&analysis, index, &mut issues);
         check_ze_infinitive(&analysis, index, &mut issues);
         check_repeated_word(&analysis, index, &mut issues);
         check_capital_start(&analysis, index, &mut issues);
