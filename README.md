@@ -186,7 +186,7 @@ string means "none"):
 | capital | `capital_start` | fixed | a sentence starting in lower case |
 | n_rule | `n_keep` | next, before (`n` `d` `t` `z` `h` or `vowel`), full | the n must stay |
 | n_rule | `n_end` | full | the n must stay at the end of a sentence |
-| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop (not on nouns in *-äin* and one-syllable nouns in *-een*, where the official spelling lets it stay: *de Wäin gëtt*, *e Steen geheien*) |
+| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop (not where the official spelling lets it stay: nouns in *-äin* and one-syllable nouns in *-een*, *de Wäin gëtt*, *e Steen geheien*; names of towns, *op Veianen fueren*; before an initialism that may be spelt out, *den LCTO-Programm*) |
 | plural | `plural_determiner` | noun, lemma (when it differs), fixed, current | singular determiner before a plural |
 | plural | `number_plural` | number, plural | a number before a singular noun |
 | plural | `number_gender_plural` | noun, gender, plural, fixed, current | zwee / zwou of the wrong gender before a singular noun: one fix for both words ("zwee Kaz" → "zwou Kazen") |
@@ -196,6 +196,7 @@ string means "none"):
 | verb | `ze_infinitive` | verb | *ze* + something else than the infinitive |
 | typography | `repeated_word` | word | the same word twice |
 | typography | `space_before` | mark | a space before `, . ; : ? !` |
+| typography | `abbreviation_space` | current, fixed | an abbreviation of single letters without a space after each point: *z.B.* → *z. B.* |
 
 ## Layout
 

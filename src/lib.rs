@@ -2532,7 +2532,7 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     {
         return;
     }
-    if n_drop_optional(analysis, index) {
+    if n_drop_optional(analysis, index) || spelt_with_vowel(next) {
         return;
     }
     // A Y that drops the n is the consonant [j]: the "sound" parameter says so, since the letter
@@ -2571,6 +2571,9 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
 /// ("e Steen geheien", "d'Schlësselbeen briechen"). Veen, Zeen and Geen always keep it.
 fn n_drop_optional(analysis: &Analysis, index: usize) -> bool {
     let word = &analysis.words[index];
+    if is_town(analysis, word) {
+        return true;
+    }
     if !analysis.only_part_of_speech(word, "SUBST") {
         return false;
     }
@@ -2583,6 +2586,49 @@ fn n_drop_optional(analysis: &Analysis, index: usize) -> bool {
         .iter()
         .any(|head| lowercase.ends_with(head))
         && !matches!(lowercase.as_str(), "sireen" | "pyreen" | "werbeen")
+}
+
+/// A town or village, where the n may stay ("op Veianen fueren", 6.4): the LOD gives places a
+/// gender only when they are countries or regions (Asien, Italien), which follow the n-rule.
+/// Names in -ien (Skandinavien), names of several words (Indeschen Ozean) and the plural names
+/// of mountains and islands (d'Alpe, d'Ardennen) follow it too.
+fn is_town(analysis: &Analysis, word: &Word) -> bool {
+    let dictionary = analysis.dictionary;
+    let entries = dictionary.entry_indices(word.record);
+    !entries.is_empty()
+        && entries.iter().all(|&i| {
+            let entry = &dictionary.entries[i];
+            entry.part_of_speech == "NP"
+                && entry.gender.is_empty()
+                && entry.lemma.ends_with("en")
+                && !entry.lemma.ends_with("ien")
+                && !entry.lemma.contains(' ')
+                && !PLURAL_PLACES.contains(&entry.lemma)
+        })
+}
+/// The LOD's names of places without a gender that are plurals.
+const PLURAL_PLACES: [&str; 11] = [
+    "Alpen",
+    "Ardennen",
+    "Kapverden",
+    "Kasematten",
+    "Komoren",
+    "Malediven",
+    "Marshallinselen",
+    "Philippinnen",
+    "Redemptoristen",
+    "Salomonen",
+    "Seychellen",
+];
+
+/// An initialism whose first letter may be spelt out with a vowel ("den LCTO-Programm", "en
+/// SNJ-Ausfluch": Ell, Ess) or read as a word: the n may stay or drop, so the rule says nothing.
+fn spelt_with_vowel(next: &Word) -> bool {
+    let mut letters = next.text.chars();
+    let (Some(first), Some(second)) = (letters.next(), letters.next()) else {
+        return false;
+    };
+    second.is_uppercase() && matches!(first, 'C' | 'F' | 'L' | 'M' | 'R' | 'S' | 'X' | 'Y')
 }
 
 /// "ee" and "een" are also the pronoun "one" ("datt ee Musek…", "Fir dat brauch een
@@ -3401,6 +3447,58 @@ fn check_space_before_punctuation(
     }
 }
 
+/// Abbreviations of single letters with a point each: "z. B.", "d. h.", "a. d. R." (8.5.1). Their
+/// letters are no words (no capital, no n-rule), and a point is followed by a space: "z.B." →
+/// "z. B.".
+fn check_letter_abbreviations(analysis: &Analysis, issues: &mut Vec<Issue>) {
+    let words = analysis.words;
+    let chars = analysis.chars;
+    let letter_point = |index: usize| {
+        let word = &words[index];
+        word.end - word.start == 1 && chars.get(word.end) == Some(&'.')
+    };
+    // the next letter of the same abbreviation: right after the point, or after one space
+    let follows = |index: usize| {
+        index + 1 < words.len() && letter_point(index + 1) && {
+            let gap = words[index + 1].start - (words[index].end + 1);
+            gap == 0 || (gap == 1 && chars[words[index].end + 1] == ' ')
+        }
+    };
+    let mut index = 0;
+    while index < words.len() {
+        if !letter_point(index) || !follows(index) {
+            index += 1;
+            continue;
+        }
+        let first = index;
+        while follows(index) {
+            index += 1;
+        }
+        issues.retain(|issue| !(first..=index).contains(&issue.word_index));
+        let glued = (first..index).any(|i| words[i + 1].start == words[i].end + 1);
+        let current = analysis.slice(words[first].start, words[index].end + 1);
+        // the LOD writes "k.o." (knocked out) in one piece
+        if glued && current.to_lowercase() != "k.o." {
+            let fixed = (first..=index)
+                .map(|i| format!("{}.", words[i].text))
+                .collect::<Vec<_>>()
+                .join(" ");
+            issues.push(
+                Issue::new(
+                    first,
+                    Severity::Warning,
+                    category::TYPOGRAPHY,
+                    "abbreviation_space",
+                    params(&[("current", &current), ("fixed", &fixed)]),
+                    vec![fixed.clone()],
+                )
+                .ending_at(analysis.utf16_offsets[words[index].end + 1]),
+            );
+        }
+        index += 1;
+    }
+}
+
 fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut utf16_offsets: Vec<usize> = Vec::with_capacity(chars.len() + 1);
@@ -3448,6 +3546,7 @@ fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
         .collect();
     check_digits_plural(&analysis, &tokens, &word_at, &mut issues);
     check_space_before_punctuation(&analysis, &tokens, &word_at, &mut issues);
+    check_letter_abbreviations(&analysis, &mut issues);
 
     fit_fixes_to_n_rule(&analysis, &mut issues);
     issues.sort_by_key(|issue| utf16_offsets[words[issue.word_index].start]);
