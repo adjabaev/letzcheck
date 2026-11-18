@@ -186,7 +186,7 @@ string means "none"):
 | capital | `capital_start` | fixed | a sentence starting in lower case |
 | n_rule | `n_keep` | next, before (`n` `d` `t` `z` `h` or `vowel`), full | the n must stay |
 | n_rule | `n_end` | full | the n must stay at the end of a sentence |
-| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop |
+| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop (not on nouns in *-äin* and one-syllable nouns in *-een*, where the official spelling lets it stay: *de Wäin gëtt*, *e Steen geheien*) |
 | plural | `plural_determiner` | noun, lemma (when it differs), fixed, current | singular determiner before a plural |
 | plural | `number_plural` | number, plural | a number before a singular noun |
 | plural | `number_gender_plural` | noun, gender, plural, fixed, current | zwee / zwou of the wrong gender before a singular noun: one fix for both words ("zwee Kaz" → "zwou Kazen") |

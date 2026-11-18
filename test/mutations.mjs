@@ -11,6 +11,8 @@
 //   n_add_wrong   a word the LOD writes without its n before another consonant gets it back:
 //                 "de Mann" → "den Mann". Kept only when no word of the LOD keeps its n before
 //                 that next word (the LOD writes both "a sengem" and "an sengem": not a case).
+//                 Nor nouns in -äin or the one-syllable ones in -een (Wäin, Steen, Schlësselbeen):
+//                 the official spelling lets them keep the n.
 //
 //   verb_person_wrong  a subject pronoun (ech, du, hien/hie, hatt, mir/mer, dir/der) right before
 //                 the present form the LOD tables give for that person gets the form of another
@@ -48,10 +50,14 @@ const DROP = new Set([...'bfgklmprsvw'])
 const word = /\p{L}+/gu
 
 // Subject pronouns and the person (0 ech … 5 si) of the verb after them.
+// The engine's n_drop_optional: nouns in -äin, and the one-syllable -een nouns and their compounds.
+// Only words that are nouns in every LOD entry, like the engine.
+const optionalN = (full, posOf) => [...(posOf.get(full) || ['?'])].every(pos => pos === 'SUBST') &&
+  (/äin$/i.test(full) || (/(been|reen|steen|seen)$/i.test(full) && !/^(sireen|pyreen|werbeen)$/i.test(full)))
 const PRONOUNS = { ech: 0, du: 1, hien: 2, hie: 2, hatt: 2, mir: 3, mer: 3, dir: 4, der: 4 }
 
 export function cases(lodFile, corpusFile) {
-  const fullToShort = new Map(), shortToFull = new Map()
+  const fullToShort = new Map(), shortToFull = new Map(), posOf = new Map()
   // Present forms per person, every LOD table: form → persons it is; table rows to swap from.
   const personsOf = new Map(), participles = new Set(), tables = [], soundsOff = new Set(), nouns = []
   const words = cell => cell.split(' / ').map(alt => alt.split(' ')[0]).filter(Boolean)
@@ -59,6 +65,8 @@ export function cases(lodFile, corpusFile) {
     const f = line.split('\t')
     // Words the LOD says sound otherwise than they are spelt (Job, Gin, Yoga): not certain cases.
     if (f.length === 11) {
+      if (!posOf.has(f[1])) posOf.set(f[1], new Set())
+      posOf.get(f[1]).add(f[2])
       if (f[8]) soundsOff.add(f[1].toLowerCase())
       if (f[2] === 'SUBST') nouns.push({ lemma: f[1], gender: f[3], plurals: f[7] ? f[7].split(', ') : [] })
       continue
@@ -111,7 +119,7 @@ export function cases(lodFile, corpusFile) {
     let family, replacement
     if (fullToShort.has(lower) && KEEP.has(initial) && !droppedBefore.has(next)) {
       family = 'n_drop_wrong'; replacement = fullToShort.get(lower)
-    } else if (shortToFull.has(lower) && DROP.has(initial) && !keptBefore.has(next)) {
+    } else if (shortToFull.has(lower) && DROP.has(initial) && !keptBefore.has(next) && !optionalN(shortToFull.get(lower), posOf)) {
       family = 'n_add_wrong'; replacement = shortToFull.get(lower)
     } else continue
     replacement = keepCase(p.a, replacement)

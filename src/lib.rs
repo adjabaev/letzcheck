@@ -2532,6 +2532,9 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     {
         return;
     }
+    if n_drop_optional(analysis, index) {
+        return;
+    }
     // A Y that drops the n is the consonant [j]: the "sound" parameter says so, since the letter
     // alone looks like a vowel.
     let sound = if next_initial == "y" { "j" } else { "" };
@@ -2561,6 +2564,25 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
             ));
         }
     }
+}
+
+/// Nouns where the official spelling (ZLS, "D'n-Reegel" 6.1.2.2) lets the n stay or drop: those
+/// in -äin ("de Wäin gëtt" or "de Wäi gëtt") and the one-syllable ones in -een, compounds too
+/// ("e Steen geheien", "d'Schlësselbeen briechen"). Veen, Zeen and Geen always keep it.
+fn n_drop_optional(analysis: &Analysis, index: usize) -> bool {
+    let word = &analysis.words[index];
+    if !analysis.only_part_of_speech(word, "SUBST") {
+        return false;
+    }
+    let lowercase = analysis.lowercase(index);
+    if lowercase.ends_with("äin") {
+        return true;
+    }
+    // Sireen, Pyreen and Werbeen are words of two syllables, not compounds of Reen or Been
+    ["been", "reen", "steen", "seen"]
+        .iter()
+        .any(|head| lowercase.ends_with(head))
+        && !matches!(lowercase.as_str(), "sireen" | "pyreen" | "werbeen")
 }
 
 /// "ee" and "een" are also the pronoun "one" ("datt ee Musek…", "Fir dat brauch een

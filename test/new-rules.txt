@@ -42,3 +42,4 @@ Hien hu säin Hiem mat Tomatenzopp besabbelt. => Hien huet säin Hiem mat Tomate
 Et kascht nénghonnertmilliardenfënnefhonnertmilliounenzweehonnertdausendhonnert Euro. => Et kascht nénghonnert Milliarde fënnefhonnert Milliounen zweehonnertdausendhonnert Euro.
 Et kascht zweemilliarden Euro. => Et kascht zwou Milliarden Euro.
 Et sinn zweemilliounenvéierhonnert Leit. => Et sinn zwou Millioune véierhonnert Leit.
+Muer de Moien kommen. => Muer de Moie kommen.
