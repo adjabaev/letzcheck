@@ -183,9 +183,9 @@ string means "none"):
 | capital | `capital_unexpected` | word, lower, gloss_fr/en/de/pt | the LOD has it in lower case only |
 | capital | `capital_missing` | noun, gloss_fr/en/de/pt | a noun written in lower case |
 | capital | `capital_start` | fixed | a sentence starting in lower case |
-| n_rule | `n_keep` | next, before (`n` `d` `t` `z` `h` or `vowel`), full | the n must stay |
-| n_rule | `n_end` | full | the n must stay at the end of a sentence |
-| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop |
+| n_rule | `n_keep` | next, before (`n` `d` `t` `z` `h` or `vowel`), full | the n must stay; before a number in digits, `next` is the number and `before` the first sound of its reading (*den 1. Abrëll*, ZLS 6.1.1) |
+| n_rule | `n_end` | full, mark (the punctuation mark, empty at the end of a sentence) | the n must stay at the end of a sentence or before a punctuation mark (ZLS 6.1.2.4) |
+| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop; before a number in digits, `initial` is the first letter of its reading (*de 5. Abrëll*: `f`) |
 | plural | `plural_determiner` | noun, lemma (when it differs), fixed, current | singular determiner before a plural |
 | plural | `number_plural` | number, plural | a number before a singular noun |
 | plural | `number_gender_plural` | noun, gender, plural, fixed, current | zwee / zwou of the wrong gender before a singular noun: one fix for both words ("zwee Kaz" → "zwou Kazen") |
