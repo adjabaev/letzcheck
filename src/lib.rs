@@ -220,6 +220,17 @@ fn sentence_end(chars: &[char]) -> bool {
     }
     i < chars.len() && matches!(chars[i], '.' | '!' | '?' | '\u{2026}')
 }
+/// The punctuation mark other than a sentence end that the gap after a word starts with (after
+/// spaces): comma, semicolon, colon, dash, slash (ZLS 6.1.2.4). A hyphen counts as a dash only
+/// with spaces around it ("goufe - graff gesinn"), not in "-kanner a -bussen". Brackets are left
+/// out, though ZLS lists them: the LOD writes optional letters and words in them
+/// ("Iergendwa(nn)", "op (de) Belval"), where the n follows the word after.
+fn pause_mark(chars: &[char]) -> Option<char> {
+    let start = chars.iter().position(|&c| !is_space(c))?;
+    let mark = chars[start];
+    let dash = mark == '-' && start > 0 && chars.get(start + 1).is_some_and(|&c| is_space(c));
+    (matches!(mark, ',' | ';' | ':' | '\u{2013}' | '\u{2014}' | '/') || dash).then_some(mark)
+}
 fn js_trim(text: &str) -> &str {
     text.trim_matches(is_space)
 }
@@ -256,6 +267,56 @@ const N_DROP_INITIALS: &str = "bcfgjklmpqrsvwx";
 fn in_set(set: &str, text: &str) -> bool {
     set.contains(text)
 }
+/// The first letter of a number of one to three digits as it is said, cardinal or ordinal: "8"
+/// aacht, "5." fënneften, "21" eenanzwanzeg (the units come first), "300" dräihonnert. None for
+/// a leading zero or more digits ("1990": a year may be said either way).
+fn spoken_number_initial(digits: &str) -> Option<char> {
+    let value: u32 = digits.parse().ok()?;
+    if digits.starts_with('0') || digits.len() > 3 {
+        return None;
+    }
+    // 0 is unused; 1 eent, 2 zwee, 3 dräi, 4 véier, 5 fënnef, 6 sechs, 7 siwen, 8 aacht, 9 néng.
+    const UNITS: [char; 10] = ['n', 'e', 'z', 'd', 'v', 'f', 's', 's', 'a', 'n'];
+    // 10 zéng, 20 zwanzeg, 30 drësseg, 40 véierzeg, 50 fofzeg, 60 sechzeg, 70 siwwenzeg,
+    // 80 achtzeg, 90 nonzeg.
+    const TENS: [char; 10] = ['n', 'z', 'z', 'd', 'v', 'f', 's', 's', 'a', 'n'];
+    let initial = match value {
+        100..=199 => 'h',
+        200.. => UNITS[(value / 100) as usize],
+        // eelef, zwielef, dräizéng … nonzéng: the units first
+        11 => 'e',
+        12 => 'z',
+        18 => 'u',
+        10 | 20 | 30 | 40 | 50 | 60 | 70 | 80 | 90 => TENS[(value / 10) as usize],
+        _ => UNITS[(value % 10) as usize],
+    };
+    Some(initial)
+}
+
+/// Word `index` is followed by a number of one to three digits, with or without the full stop
+/// of an ordinal, and then a space: "den 1. Abrëll", "e 8 kritt". Returns its digits and the
+/// first letter of its reading.
+fn number_after(analysis: &Analysis, index: usize) -> Option<(String, char)> {
+    if index + 1 >= analysis.words.len() {
+        return None;
+    }
+    let gap = analysis.gap_after(index);
+    let start = gap.iter().position(|&c| !is_space(c)).filter(|&s| s > 0)?;
+    let length = gap[start..]
+        .iter()
+        .take_while(|c| c.is_ascii_digit())
+        .count();
+    let mut rest = &gap[start + length..];
+    if let Some(after_stop) = rest.strip_prefix(&['.']) {
+        rest = after_stop;
+    }
+    if length == 0 || rest.is_empty() || !is_blank(rest) {
+        return None;
+    }
+    let digits: String = gap[start..start + length].iter().collect();
+    spoken_number_initial(&digits).map(|initial| (digits, initial))
+}
+
 /// Whether the next word keeps a final n before it: Some(true) keep, Some(false) drop, None
 /// when the rule does not decide (an unknown Y word, a digit…). Y depends on how it sounds:
 /// "en Yttrium" (vowel) but "e Yoga" (the consonant [j]), taken from the LOD pronunciation.
@@ -2482,6 +2543,38 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
         }
     }
 
+    // ZLS 6.1.1: before a number in digits, the n follows its reading ("den 1. Abrëll" for
+    // éischten, "de 5. Abrëll" for fënneften).
+    if let Some((digits, said)) = number_after(analysis, index) {
+        if among_foreign_words(analysis, index) {
+            return;
+        }
+        let said = said.to_string();
+        let keep = in_set(N_KEEP_INITIALS, &said);
+        if only_n_variant && !full_forms.is_empty() && keep {
+            if ech_du_without_form(analysis, index, full_forms[0]) {
+                return;
+            }
+            let full = keep_case(text, full_forms[0]);
+            let before = if said == "a" || said == "e" || said == "u" {
+                "vowel"
+            } else {
+                said.as_str()
+            };
+            issues.push(Issue::new(
+                index,
+                Severity::Error,
+                category::N_RULE,
+                "n_keep",
+                params(&[("next", &digits), ("before", before), ("full", &full)]),
+                vec![full],
+            ));
+        } else if !only_n_variant && !keep && !word.clitic && !n_drop_optional(analysis, index) {
+            issues.extend(n_drop_issue(analysis, index, &digits, &said, ""));
+        }
+        return;
+    }
+
     if only_n_variant && !full_forms.is_empty() {
         // The word is a form without its n: is the n needed here?
         if ech_du_without_form(analysis, index, full_forms[0]) {
@@ -2510,15 +2603,35 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                     vec![full],
                 ));
             }
-            _ if sentence_end(analysis.gap_after(index)) => issues.push(Issue::new(
-                index,
-                Severity::Error,
-                category::N_RULE,
-                "n_end",
-                params(&[("full", &full)]),
-                vec![full],
-            )),
-            _ => {}
+            _ => {
+                // ZLS 6.1.2.4: the n stays before every punctuation mark, even when it is not
+                // said ("Mir wollte froen, wéini…", "Ech verkafen en (kaum benotzten) Computer").
+                let gap = analysis.gap_after(index);
+                // Not a letter in a list ("a, b an c"), nor the set phrase "Nix da, …", nor a
+                // language code ("de: Verordnung"). Nor a word among others the LOD does not know:
+                // a title or a name in another language ("vaterländische Geschichte, Kunst").
+                let length = text.chars().count();
+                let nix_da =
+                    word.form == "da" && index > 0 && analysis.lowercase(index - 1) == "nix";
+                let foreign = among_foreign_words(analysis, index);
+                let mark = if sentence_end(gap) {
+                    String::new()
+                } else if let Some(mark) = pause_mark(gap).filter(|&mark| {
+                    length > 1 && !nix_da && !foreign && !(mark == ':' && length <= 2)
+                }) {
+                    mark.to_string()
+                } else {
+                    return;
+                };
+                issues.push(Issue::new(
+                    index,
+                    Severity::Error,
+                    category::N_RULE,
+                    "n_end",
+                    params(&[("full", &full), ("mark", &mark)]),
+                    vec![full],
+                ));
+            }
         }
         return;
     }
@@ -2538,6 +2651,44 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     // A Y that drops the n is the consonant [j]: the "sound" parameter says so, since the letter
     // alone looks like a vowel.
     let sound = if next_initial == "y" { "j" } else { "" };
+    issues.extend(n_drop_issue(
+        analysis,
+        index,
+        &next.text,
+        &next_initial,
+        sound,
+    ));
+}
+
+/// Word `index` stands next to a word the LOD does not know, or after a French article or
+/// conjunction: a name or a title in another language ("vaterländische Geschichte, Kunst", "Den
+/// 85. Jahrestag", "La notte,", "marxisme et psychanalyse,"), where the n-rule does not apply.
+/// Used for the rules beyond the next word (punctuation, digits), which are the least sure.
+fn among_foreign_words(analysis: &Analysis, index: usize) -> bool {
+    let known = |position: usize| {
+        let word = &analysis.words[position];
+        matches!(word.status, Status::Ok | Status::Case) || word.clitic
+    };
+    let french = index > 0
+        && matches!(
+            analysis.lowercase(index - 1).as_str(),
+            "la" | "le" | "les" | "et" | "du" | "des" | "l'"
+        );
+    french
+        || (index > 0 && !known(index - 1))
+        || (index + 1 < analysis.words.len() && !known(index + 1))
+}
+
+/// The `n_drop` remark on word `index`, when the LOD has its form without the n.
+fn n_drop_issue(
+    analysis: &Analysis,
+    index: usize,
+    next: &str,
+    next_initial: &str,
+    sound: &str,
+) -> Option<Issue> {
+    let dictionary = analysis.dictionary;
+    let word = &analysis.words[index];
     // At the start of a sentence the capital is the sentence's, not the word's: "Wann mir" is
     // "wann mir" ("Hunn", the rooster, keeps its own entry when it has one).
     let lowered;
@@ -2546,24 +2697,24 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
         lowered = lowercase_first(form);
         form = lowered.as_str();
     }
-    if let Some(&without_n) = dictionary.n_dropped.get(form) {
-        if dictionary.valid_record(without_n).is_some() && form != without_n {
-            let fixed = keep_case(text, without_n);
-            issues.push(Issue::new(
-                index,
-                Severity::Warning,
-                category::N_RULE,
-                "n_drop",
-                params(&[
-                    ("next", &next.text),
-                    ("initial", &next_initial),
-                    ("sound", sound),
-                    ("fixed", &fixed),
-                ]),
-                vec![fixed],
-            ));
-        }
+    let &without_n = dictionary.n_dropped.get(form)?;
+    if dictionary.valid_record(without_n).is_none() || form == without_n {
+        return None;
     }
+    let fixed = keep_case(&word.text, without_n);
+    Some(Issue::new(
+        index,
+        Severity::Warning,
+        category::N_RULE,
+        "n_drop",
+        params(&[
+            ("next", next),
+            ("initial", next_initial),
+            ("sound", sound),
+            ("fixed", &fixed),
+        ]),
+        vec![fixed],
+    ))
 }
 
 /// Nouns where the official spelling (ZLS, "D'n-Reegel" 6.1.2.2) lets the n stay or drop: those
