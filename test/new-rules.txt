@@ -1,5 +1,4 @@
-# Lines with no "=>" only need a remark; their expected correction is in test/known.txt while
-# the fixes still chain.
+# Lines with no "=>" only need a remark (no fix can be expected).
 Hien spillen all Dag Fussball. => Hie spillt all Dag Fussball.
 Dir spills ze vill. => Dir spillt ze vill.
 Si spills mat hirem Hond. => Si spillt mat hirem Hond.
@@ -7,14 +6,12 @@ Ech ginn haut net. Hien ginn och net. => Ech ginn haut net. Hie gëtt och net.
 Hatt schaffen zu Lëtzebuerg. => Hatt schafft zu Lëtzebuerg.
 Ech hunn zwee Auto an dräi Kand. => Ech hunn zwee Autoen an dräi Kanner.
 Si huet 3 Hond an 2 Kaz. => Si huet 3 Hënn an 2 Kazen.
-Mir wunnen zwou Stonn vun hei.
-Mir kommen vun dem Bësch. => Mir komme vum Bësch.
-Hie geet zu dem Dokter. => Hie geet zum Dokter.
-Ech sinn bei dem Coiffer. => Ech si beim Coiffer.
-D'Buch läit op dem Dësch. => D'Buch läit um Dësch.
+Mir wunnen zwou Stonn vun hei. => Mir wunnen zwou Stonne vun hei.
+Mir kommen vun dem Bësch. => Mir komme vun dem Bësch.
+Ech sinn bei dem Coiffer. => Ech si bei dem Coiffer.
 Et ass schwéier ze spillt. => Et ass schwéier ze spillen.
 Ech probéieren ze schafft. => Ech probéieren ze schaffen.
-Mir drenken Kaffi am Gaart.
+Mir drenken Kaffi am Gaart. => Mir drénke Kaffi am Gaart.
 Ech iessen Kéis am Schnei. => Ech iesse Kéis am Schnéi.
 Den Hond Hond leeft. => Den Hond leeft.
 Ech wunnen zu Lëtzebuerg. mir hunn e Gaart. => Ech wunnen zu Lëtzebuerg. Mir hunn e Gaart.
@@ -45,8 +42,6 @@ Mir fueren an Italien fir eng Woch. => Mir fueren an Italie fir eng Woch.
 Mir hunn d'kanner gesinn. => Mir hunn d'Kanner gesinn.
 Hie gëtt der Bouf e Bréif. => Hie gëtt dem Bouf e Bréif.
 Mir kommen aus mäin Haiser. => Mir kommen aus meng Haiser.
-Hien ass am Beschten doheem. => Hien ass am beschten doheem.
-Dat ass dat Neit Theaterstéck. => Dat ass dat neit Theaterstéck.
 Mir wollte froe, wéini et ufänkt. => Mir wollte froen, wéini et ufänkt.
 Moie, wéi geet et? => Moien, wéi geet et?
 Si goufe – wéi gesot – net gefrot. => Si goufen – wéi gesot – net gefrot.
@@ -71,3 +66,11 @@ Si huet zwou Kopie gemaach. => Si huet zwou Kopië gemaach.
 Hien sinn doheem. => Hien ass doheem.
 Hien hu Honger. => Hien huet Honger.
 Hien huet a Filmer a -serien matgespillt. => Hien huet a Filmer a -serië matgespillt.
+Déi zwee Hond haten sech anenee verbass. => Déi zwee Hënn haten sech anenee verbass.
+Ech seet Iech Merci fir Är wäertvoll Hëllef! => Ech soen Iech Merci fir Är wäertvoll Hëllef!
+Hien hu säin Hiem mat Tomatenzopp besabbelt. => Hien huet säin Hiem mat Tomatenzopp besabbelt.
+Et kascht nénghonnertmilliardenfënnefhonnertmilliounenzweehonnertdausendhonnert Euro. => Et kascht nénghonnert Milliarde fënnefhonnert Milliounen zweehonnertdausendhonnert Euro.
+Et kascht zweemilliarden Euro. => Et kascht zwou Milliarden Euro.
+Et sinn zweemilliounenvéierhonnert Leit. => Et sinn zwou Millioune véierhonnert Leit.
+Muer de Moien kommen. => Muer de Moie kommen.
+Mir hunn z.B. all Mount en Ausfluch mat hinne gemaach. => Mir hunn z. B. all Mount en Ausfluch mat hinne gemaach.

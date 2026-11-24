@@ -11,12 +11,28 @@
 //   n_add_wrong   a word the LOD writes without its n before another consonant gets it back:
 //                 "de Mann" → "den Mann". Kept only when no word of the LOD keeps its n before
 //                 that next word (the LOD writes both "a sengem" and "an sengem": not a case).
+//                 Nor nouns in -äin or the one-syllable ones in -een (Wäin, Steen, Schlësselbeen):
+//                 the official spelling lets them keep the n. Nor names of towns (op Veianen fueren).
 //
 //   verb_person_wrong  a subject pronoun (ech, du, hien/hie, hatt, mir/mer, dir/der) right before
 //                 the present form the LOD tables give for that person gets the form of another
 //                 person: "ech spillen" → "ech spills". The new form is no person's form for that
 //                 pronoun in any LOD table, nor a past participle anywhere ("du bezuelt" can be a
 //                 perfect), and for mir/dir (also datives: "mir ass kal") not a 3rd-person form.
+//
+//   gender_wrong  a determiner right before a singular noun of one gender in every LOD entry gets
+//                 the form of another gender: "de Mann" → "d'Mann", "eng Fro" → "e Fro", "dem Bësch"
+//                 → "der Bësch", "meng Mamm" → "mäi Mamm". Only when the LOD never writes that
+//                 determiner before that noun ("der Däiwel" is in the LOD: not a case).
+//   number_plural_wrong  a number word before a plural the LOD lists for a noun gets the singular:
+//                 "zwee Hënn" → "zwee Hond". Only nouns whose singular the LOD never writes after a
+//                 number ("dräi Mol", "zwee Liter": not cases).
+//
+//   accent_wrong  one accent of a word of the sentence is dropped ("Schnéi" → "Schnei"), only when
+//                 the bare form is no LOD form in any case and the spellchecker.lu dictionary (run
+//                 by hunspell) rejects it too ("Bänk" → "Bank" is a word: not a case). One per
+//                 sentence, in one sentence out of seven.
+//                 Left out when hunspell is not installed.
 //
 // The n-less form of a word comes from the LOD inflections (lod.txt forms marked "n"). Letters
 // whose sound may differ from their spelling (c, j, q, x, y: "Job", "Yoga", "Chili") are left out.
@@ -26,22 +42,29 @@
 //   prints, per family, the cases where a remark covers the broken word ("caught") and where
 //   applying the first fix of those remarks gives back the LOD sentence ("fixed").
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
 
 const KEEP = new Set([...'aeiouäëéèêöüàâîôûndtzh'])
 const DROP = new Set([...'bfgklmprsvw'])
 const word = /\p{L}+/gu
 
 // Subject pronouns and the person (0 ech … 5 si) of the verb after them.
+// The engine's n_drop_optional: nouns in -äin, and the one-syllable -een nouns and their compounds.
+// Only words that are nouns in every LOD entry, like the engine.
+const optionalN = (full, posOf) => [...(posOf.get(full) || ['?'])].every(pos => pos === 'SUBST') &&
+  (/äin$/i.test(full) || (/(been|reen|steen|seen)$/i.test(full) && !/^(sireen|pyreen|werbeen)$/i.test(full)))
+const PLURAL_PLACES = new Set(['Alpen', 'Ardennen', 'Kapverden', 'Kasematten', 'Komoren', 'Malediven', 'Marshallinselen', 'Philippinnen', 'Redemptoristen', 'Salomonen', 'Seychellen'])
 const PRONOUNS = { ech: 0, du: 1, hien: 2, hie: 2, hatt: 2, mir: 3, mer: 3, dir: 4, der: 4 }
 
 export function cases(lodFile, corpusFile) {
-  const fullToShort = new Map(), shortToFull = new Map()
+  const fullToShort = new Map(), shortToFull = new Map(), posOf = new Map(), towns = new Set()
   // Present forms per person, every LOD table: form → persons it is; table rows to swap from.
-  const personsOf = new Map(), participles = new Set(), tables = [], soundsOff = new Set()
+  const personsOf = new Map(), participles = new Set(), tables = [], soundsOff = new Set(), nouns = []
   const words = cell => cell.split(' / ').map(alt => alt.split(' ')[0]).filter(Boolean)
   // Words whose n ZLS leaves free before a consonant (6.1.2.2, 6.4): nouns in -äin, one-syllable
   // nouns in -een, towns (an LOD name with no gender). Adding their n is no mistake.
-  const entries = [], optionalN = new Set()
+  const entries = [], optionalSet = new Set()
   const optional = (form, e) => e[2] === 'SUBST'
     ? form.endsWith('äin') || form.endsWith('een') && [...form].filter(c => 'aeiouäëéöüy'.includes(c)).length <= 2
     : e[2] === 'NP' && !e[3] && !e[1].includes(' ')
@@ -50,10 +73,18 @@ export function cases(lodFile, corpusFile) {
     if (f.length === 11) entries.push(f)
     if (f.length === 4 && f[1] && !f[1].startsWith('!')) {
       const es = f[1].split(',').map(i => entries[+i])
-      if (es.every(e => e && optional(f[0].toLowerCase(), e))) optionalN.add(f[0])
+      if (es.every(e => e && optional(f[0].toLowerCase(), e))) optionalSet.add(f[0])
     }
     // Words the LOD says sound otherwise than they are spelt (Job, Gin, Yoga): not certain cases.
-    if (f.length === 11 && f[8]) { soundsOff.add(f[1].toLowerCase()); continue }
+    if (f.length === 11) {
+      // Towns and villages may keep their n (the engine's is_town).
+      if (f[2] === 'NP' && !f[3] && /en$/.test(f[1]) && !/ien$/.test(f[1]) && !f[1].includes(' ') && !PLURAL_PLACES.has(f[1])) towns.add(f[1])
+      if (!posOf.has(f[1])) posOf.set(f[1], new Set())
+      posOf.get(f[1]).add(f[2])
+      if (f[8]) soundsOff.add(f[1].toLowerCase())
+      if (f[2] === 'SUBST') nouns.push({ lemma: f[1], gender: f[3], plurals: f[7] ? f[7].split(', ') : [] })
+      continue
+    }
     if (f.length === 9 && /^\d+$/.test(f[0])) {
       for (const pp of words(f[2])) participles.add(pp)
       const row = f.slice(3, 9).map(words)
@@ -103,7 +134,8 @@ export function cases(lodFile, corpusFile) {
     if (fullToShort.has(lower) && KEEP.has(initial) && !droppedBefore.has(next)) {
       family = 'n_drop_wrong'; replacement = fullToShort.get(lower)
     } else if (shortToFull.has(lower) && DROP.has(initial) && !keptBefore.has(next)
-        && !optionalN.has(shortToFull.get(lower))) {
+        && !optionalSet.has(shortToFull.get(lower)) && !optionalN(shortToFull.get(lower), posOf)
+        && !towns.has(shortToFull.get(lower))) {
       family = 'n_add_wrong'; replacement = shortToFull.get(lower)
     } else continue
     replacement = keepCase(p.a, replacement)
@@ -132,6 +164,110 @@ export function cases(lodFile, corpusFile) {
         out.push({ family: 'verb_person_wrong', wrong: right.slice(0, v.index) + w + right.slice(v.index + v[0].length), right, start: v.index, end: v.index + w.length })
       })
     }
+  }
+  // Gender of the determiner. A noun is certain when every LOD entry with that spelling is a noun
+  // of the same single gender, and the spelling is no plural of any noun.
+  // ("Mann" is also a plural of "Mann": "d'Mann" can be right)
+  const genderOf = new Map(), pluralForms = new Map(), selfPlural = new Set()
+  for (const n of nouns) {
+    genderOf.set(n.lemma, genderOf.has(n.lemma) && genderOf.get(n.lemma) !== n.gender ? '?' : n.gender)
+    for (const p of n.plurals) if (p === n.lemma) selfPlural.add(p)
+    for (const p of n.plurals) if (p && p !== n.lemma && !p.includes(' ')) {
+      if (!pluralForms.has(p)) pluralForms.set(p, new Set())
+      pluralForms.get(p).add(n.lemma)
+    }
+  }
+  const nounGender = w => { const g = genderOf.get(w); return g && /^[MFN]$/.test(g) && !pluralForms.has(w) && !selfPlural.has(w) ? g : '' }
+  // determiner → [gender it fits, the form for the other genders]; "N" uses the masculine forms
+  // except for the definite article.
+  const SWAP = {
+    den: ['M', { F: "d'" }], de: ['M', { F: "d'" }], "d'": ['FN', { M: 'den|de' }],
+    en: ['MN', { F: 'eng' }], e: ['MN', { F: 'eng' }], eng: ['F', { M: 'en|e', N: 'en|e' }],
+    dem: ['MN', { F: 'der' }], der: ['F', { M: 'dem', N: 'dem' }],
+    engem: ['MN', { F: 'enger' }], enger: ['F', { M: 'engem', N: 'engem' }],
+    'mäin': ['MN', { F: 'meng' }], 'mäi': ['MN', { F: 'meng' }], meng: ['F', { M: 'mäin|mäi', N: 'mäin|mäi' }],
+    'däin': ['MN', { F: 'deng' }], 'däi': ['MN', { F: 'deng' }], deng: ['F', { M: 'däin|däi', N: 'däin|däi' }],
+    'säin': ['MN', { F: 'seng' }], 'säi': ['MN', { F: 'seng' }], seng: ['F', { M: 'säin|säi', N: 'säin|säi' }],
+    keen: ['MN', { F: 'keng' }], kee: ['MN', { F: 'keng' }], keng: ['F', { M: 'keen|kee', N: 'keen|kee' }],
+  }
+  // What the LOD writes: determiner + noun pairs, number + noun pairs.
+  const detPairs = new Set(), numberPairs = new Set()
+  const NUMBERS = new Set(['zwee', 'zwou', 'dräi', 'véier', 'fënnef', 'sechs', 'siwen', 'siwe', 'aacht', 'néng', 'zéng', 'eelef', 'zwielef', 'honnert', 'dausend'])
+  const detRe = /(?<![\p{L}'’´-])(d['’]|\p{L}+ )(\p{Lu}\p{L}*)/gu
+  for (const s of sentences) for (const m of s.matchAll(detRe)) {
+    const det = m[1].trim().toLowerCase().replace('’', "'")
+    detPairs.add(det + ' ' + m[2])
+    if (NUMBERS.has(det)) numberPairs.add(det + ' ' + m[2])
+  }
+  const pick = (variants, noun) => {
+    const [withN, withoutN] = variants.split('|')
+    if (!withoutN) return withN
+    const initial = noun[0].toLowerCase()
+    return KEEP.has(initial) ? withN : DROP.has(initial) ? withoutN : ''
+  }
+  for (const right of sentences) for (const m of right.matchAll(detRe)) {
+    const raw = m[1], noun = m[2], det = raw.trim().toLowerCase().replace('’', "'")
+    const at = m.index, before = right.slice(0, at)
+    // number + plural → number + singular
+    if (NUMBERS.has(det) && pluralForms.has(noun) && !genderOf.has(noun)) {
+      const singulars = [...pluralForms.get(noun)]
+      const singular = singulars[0]
+      if (singulars.length === 1 && ![...NUMBERS].some(n => numberPairs.has(n + ' ' + singular))) {
+        const start = at + raw.length
+        out.push({ family: 'number_plural_wrong', wrong: right.slice(0, start) + singular + right.slice(start + noun.length), right, start, end: start + singular.length })
+      }
+      continue
+    }
+    const swap = SWAP[det], gender = nounGender(noun)
+    if (!swap || !gender || !swap[0].includes(gender) || soundsOff.has(noun.toLowerCase())) continue
+    if (/\bs\s*$/.test(before)) continue          // "wann s de Zäit hues": "de" is "du"
+    for (const [other, variants] of Object.entries(swap[1])) {
+      if (other === gender) continue
+      const form = pick(variants, noun)
+      if (!form || detPairs.has(form + ' ' + noun)) continue
+      // keep the case of the determiner as written
+      const shown = raw[0] === raw[0].toUpperCase() ? form[0].toUpperCase() + form.slice(1) : form
+      const glue = shown.endsWith("'") ? '' : ' '
+      const wrong = before + shown + glue + right.slice(at + raw.length)
+      out.push({ family: 'gender_wrong', wrong, right, start: at, end: at + shown.length + glue.length + noun.length })
+      break
+    }
+  }
+  // Accents: the bare form must be no word at all.
+  const known = new Set()
+  for (const line of fs.readFileSync(lodFile, 'utf8').split('\n')) {
+    const f = line.split('\t')
+    if (f.length === 4 && f[0]) known.add(f[0].toLowerCase())
+  }
+  const BARE = { 'é': 'e', 'ë': 'e', 'è': 'e', 'ê': 'e', 'ä': 'a', 'à': 'a', 'â': 'a', 'ö': 'o', 'ô': 'o', 'ü': 'u', 'û': 'u', 'î': 'i' }
+  const accentCandidates = []
+  // A fixed sample (one sentence in 7): misspelt words make the engine search for suggestions,
+  // which is slow over tens of thousands of cases.
+  for (const [n, right] of sentences.entries()) {
+    if (n % 7) continue
+    for (const m of right.matchAll(word)) {
+      if (m.index > 0 && /['’´-]/.test(right[m.index - 1])) continue
+      const w = m[0], at = [...w].findIndex(ch => BARE[ch.toLowerCase()])
+      if (at < 0 || w.length < 3) continue
+      const chars = [...w], ch = chars[at]
+      chars[at] = ch === ch.toLowerCase() ? BARE[ch] : BARE[ch.toLowerCase()].toUpperCase()
+      const bare = chars.join('')
+      if (known.has(bare.toLowerCase())) continue
+      accentCandidates.push({ right, start: m.index, word: w, bare })
+      break
+    }
+  }
+  const dict = path.join(path.dirname(lodFile), 'spell', 'lb_LU')
+  let rejected = null
+  try {
+    const words = [...new Set(accentCandidates.map(c => c.bare))]
+    rejected = new Set(execFileSync('hunspell', ['-l', '-d', dict], { input: words.join('\n'), maxBuffer: 64 << 20 }).toString().split('\n'))
+  } catch (e) {
+    process.stderr.write('accent_wrong left out: hunspell not available\n')
+  }
+  if (rejected) for (const c of accentCandidates) {
+    if (!rejected.has(c.bare)) continue
+    out.push({ family: 'accent_wrong', wrong: c.right.slice(0, c.start) + c.bare + c.right.slice(c.start + c.word.length), right: c.right, start: c.start, end: c.start + c.bare.length })
   }
   return out
 }

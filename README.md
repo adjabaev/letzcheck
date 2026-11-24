@@ -21,11 +21,10 @@ open data under CC0:
 This repository ships neither: `make data` downloads them and builds the engine's index.
 
 ```
-$ node examples/check.mjs "Ech hunn ee Fro. Hien spillen zu dem Bësch."
+$ node examples/check.mjs "Ech hunn ee Fro. Hien spillen am Bësch."
 warn ee       gender/gender_determiner {"noun":"Fro","gender":"F","fixed":"eng Fro","current":"ee Fro"}  → eng
 warn Hien     n_rule/n_drop {"next":"spillen","initial":"s","sound":"","fixed":"Hie"}  → Hie
 err  spillen  verb/verb_form {"pronoun":"hien","verb":"spillen","lemma":"spillen","expected":"hien spillt"}  → spillt
-warn zu       contraction/contraction {"phrase":"zu dem","contracted":"zum"}  → zum
 ```
 
 The engine writes no sentences. Each remark is a rule key with named parameters and the fixes;
@@ -42,7 +41,7 @@ make            # downloads the LOD (about 13 MB of zips) and the spellchecker.l
                 # builds data/lod.txt and dist/letz.wasm
 make test       # the hand-written cases in test/; fails if one breaks
 make check      # before a commit: the cases, then against HEAD: no new false alarm, no certified
-                # mistake (LOD sentence with one n-rule mistake) handled worse, no worse typo
+                # mistake (LOD sentence with one known mistake) handled worse, no worse typo
 make corpus     # every remark on 54,996 correct sentences from the LOD (all false alarms)
 make spell      # src/spell.rs against the real hunspell program, word by word (needs hunspell)
 ```
@@ -101,6 +100,8 @@ through the same tests:
 - **typos**: 2,000 corpus words with one typo each (a letter missing, swapped, replaced or added;
   fixed seed): is it caught, is the right word the first fix, is it among the first four;
 - **grammar**: the wrong sentences of `test/new-rules.txt` where every word exists;
+- **certified**: the certified mistakes of `test/mutations.mjs` (LOD sentences with one mistake the
+  rule leaves no doubt about), per family: cases, caught, and fixed back to the LOD sentence;
 - **speed** of the analysis, and the **speller agreement** of `make spell`.
 
 [letz.arby.be](https://letz.arby.be/#quality) draws its quality section from that JSON.
@@ -165,7 +166,7 @@ number(wi) -> out                    the value of word wi when it is a number in
 when only the spellchecker.lu dictionary has it; `close` is the first fix (absent without fixes).
 
 Categories: `spelling`, `compound`, `unlisted`, `proper_noun`, `capital`, `n_rule`, `plural`,
-`gender`, `verb`, `contraction`, `typography`. Rules and their parameters (all strings; an empty
+`gender`, `verb`, `typography`. Rules and their parameters (all strings; an empty
 string means "none"):
 
 | Category | Rule | Parameters | When |
@@ -179,14 +180,14 @@ string means "none"):
 | compound | `compound` | word, first, first_fr/en/de/pt, second, second_fr/en/de/pt | looks like first + second (with their LOD translations) |
 | unlisted | `unlisted_attested` | word | no entry, but used in LOD examples |
 | spelling | `number_spelling` | word, expected, value | a number in words with wrong accents (*uechtzenghonnert…* → *uechtzénghonnert…*, 1815) |
-| spelling | `number_split` | word, expected, value | millions written together: *Millioun(en)* stands apart |
+| spelling | `number_split` | word, expected, value | millions or billions written together: *Millioun(en)* and *Milliard(en)* stand apart, with the n-rule and *zwou* inside the fix |
 | proper_noun | `proper_noun` | word, close?, close_source? | unknown, capitalised: maybe a name |
 | capital | `capital_unexpected` | word, lower, gloss_fr/en/de/pt | the LOD has it in lower case only |
 | capital | `capital_missing` | noun, gloss_fr/en/de/pt | a noun written in lower case |
 | capital | `capital_start` | fixed | a sentence starting in lower case |
 | n_rule | `n_keep` | next, before (`n` `d` `t` `z` `h` or `vowel`), full | the n must stay; before a number in digits, `next` is the number and `before` the first sound of its reading (*den 1. Abrëll*, ZLS 6.1.1) |
 | n_rule | `n_end` | full, mark (the punctuation mark, empty at the end of a sentence) | the n must stay at the end of a sentence (`err`) or before a punctuation mark (`warn`, ZLS 6.1.2.4) |
-| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop; before a number in digits, `initial` is the first letter of its reading (*de 5. Abrëll*: `f`) |
+| n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop; before a number in digits, `initial` is the first letter of its reading (*de 5. Abrëll*: `f`) (not where the official spelling lets it stay: nouns in *-äin* and one-syllable nouns in *-een*, *de Wäin gëtt*, *e Steen geheien*; names of towns, *op Veianen fueren*; before an initialism that may be spelt out, *den LCTO-Programm*) |
 | plural | `plural_determiner` | noun, lemma (when it differs), fixed, current | singular determiner before a plural |
 | plural | `number_plural` | number, plural | a number before a singular noun |
 | plural | `number_gender_plural` | noun, gender, plural, fixed, current | zwee / zwou of the wrong gender before a singular noun: one fix for both words ("zwee Kaz" → "zwou Kazen") |
@@ -194,10 +195,10 @@ string means "none"):
 | verb | `verb_form` | pronoun, verb, lemma, expected | wrong person, with the right form |
 | verb | `verb_mismatch` | pronoun, verb | wrong person, no form to offer |
 | verb | `ze_infinitive` | verb | *ze* + something else than the infinitive |
-| contraction | `contraction` | phrase, contracted | *vun dem* → *vum* |
 | typography | `repeated_word` | word | the same word twice |
 | typography | `space_before` | mark | a space before `, . ; : ? !` |
 | typography | `space_after` | mark (the apostrophe) | a space after *d'* before a capitalised word or *z'* before a verb: *d' Kanner* → *d'Kanner* (ZLS 10.5.1); the fix covers both words |
+| typography | `abbreviation_space` | current, fixed | an abbreviation of single letters without a space after each point: *z.B.* → *z. B.* |
 
 ## Layout
 

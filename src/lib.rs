@@ -65,8 +65,9 @@ struct Entry {
     /// The LOD translations, "; "-separated, in the order of LANGUAGES.
     translations: [StaticStr; 4],
     plural: StaticStr,
-    /// For a word starting with Y, how the Y sounds: b'j' (consonant, as in Yoga), b'v' (vowel,
-    /// as in Yttrium), 0 when unknown or not a Y word. From the LOD pronunciation.
+    /// How the word starts to the ear where its spelling misleads (c j q x y, g as [dʒ], a vowel
+    /// read [j], initialisms): b'v' when the n-rule keeps the n before it (Job, Yttrium), b'j'
+    /// when it drops (Yoga, User), 0 when the letter tells. From the LOD pronunciation.
     y_onset: u8,
 }
 
@@ -573,7 +574,9 @@ fn build_determiners() -> HashMap<String, Determiner> {
                 Some(neuter) => determiner("M", &[('F', feminine), ('N', neuter)]),
                 None => determiner("MN", &[('F', feminine)]),
             };
-            if !also_dative_plural {
+            // "hiren / hire", "eisen / eise", "ären / äre", "dësen / dëse" are also the dative
+            // plural ("mat hire Kanner", "vun eise Clienten"): no plural check without the case.
+            if !also_dative_plural && neuter.is_none() {
                 entry.plural = Some(feminine.to_string());
             }
             put(&mut table, form, entry);
@@ -1497,51 +1500,86 @@ fn number_below_million(text: &str) -> Option<NumberReading> {
     })
 }
 
+/// The n-rule inside a number written out: a final n stays before a vowel or n, d, t, z, h.
+fn number_keeps_n(next: &str) -> bool {
+    next.chars()
+        .next()
+        .is_some_and(|c| "aeiouäëéöüyndtzh".contains(c.to_lowercase().next().unwrap_or(c)))
+}
+
+/// Count of millions or billions, then its noun: "eng Millioun", "zwou Milliounen" (the noun is
+/// feminine), "siwe Milliarden" (n-rule before M). The noun's own n is fitted by the caller.
+fn count_and_noun(count: &NumberReading, singular: &str, plural: &str) -> Vec<String> {
+    let head = match count.value {
+        1 => "eng".to_string(),
+        2 => "zwou".to_string(),
+        _ => match count.spelling.strip_suffix("siwen") {
+            Some(start) => format!("{start}siwe"),
+            None => count.spelling.clone(),
+        },
+    };
+    let noun = if count.value == 1 { singular } else { plural };
+    vec![head, noun.to_string()]
+}
+
+/// `text` split at the first of `keywords` (folded) found in it, longest first.
+fn split_at_any<'a>(text: &'a str, keywords: &[&str]) -> Option<(&'a str, &'a str)> {
+    keywords.iter().find_map(|k| split_at_keyword(text, k))
+}
+
+/// The count before "millioun" or "milliard": below a thousand, "eng" read as one.
+fn number_count(before: &str) -> Option<NumberReading> {
+    if before.is_empty() || before == "eng" {
+        return Some(NumberReading {
+            value: 1,
+            spelling: "eng".to_string(),
+        });
+    }
+    number_below_thousand(before)
+}
+
 /// A number written in one word, whatever its accents. The spelling is the right one: the word
-/// with its accents, or, for millions written together ("…milliounvéierhonnert…"), the separate
-/// form ("… Milliounen véierhonnert…"). Single pieces ("zwee", "honnert") are LOD words already.
+/// with its accents, or, for millions and billions written together
+/// ("…milliardenfënnefhonnertmilliounen…"), the separate form ("… Milliarde fënnefhonnert
+/// Milliounen …"), with the n-rule inside it. Single pieces ("zwee", "honnert") are LOD words.
 fn read_number(word: &str) -> Option<NumberReading> {
     let text = fold_number(word);
     if let Some(found) = number_below_million(&text) {
         return Some(found);
     }
-    let keyword = if text.contains("milliounen") {
-        "milliounen"
-    } else {
-        "millioun"
-    };
-    let (before, after) = split_at_keyword(&text, keyword)?;
-    let millions = if before.is_empty() {
-        NumberReading {
-            value: 1,
-            spelling: "eng".to_string(),
+    let mut value = 0u64;
+    let mut parts: Vec<String> = Vec::new();
+    // Billions, then millions, then the rest below a million.
+    let mut rest: &str = &text;
+    if let Some((before, after)) = split_at_any(rest, &["milliarden", "milliarde", "milliard"]) {
+        let count = number_count(before)?;
+        value += count.value * 1_000_000_000;
+        parts.extend(count_and_noun(&count, "Milliard", "Milliarden"));
+        rest = after;
+    }
+    if let Some((before, after)) = split_at_any(rest, &["milliounen", "millioune", "millioun"]) {
+        let count = number_count(before)?;
+        value += count.value * 1_000_000;
+        parts.extend(count_and_noun(&count, "Millioun", "Milliounen"));
+        rest = after;
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    if !rest.is_empty() {
+        let below = number_below_million(rest)?;
+        value += below.value;
+        parts.push(below.spelling);
+    }
+    // The n-rule between the parts: "Milliarde fënnefhonnert", "Milliounen zweehonnert".
+    for i in 0..parts.len() - 1 {
+        if parts[i].ends_with("en") && !number_keeps_n(&parts[i + 1]) {
+            parts[i].pop();
         }
-    } else {
-        number_below_thousand(&before.replace("eng", "een"))?
-    };
-    let rest = if after.is_empty() {
-        None
-    } else {
-        Some(number_below_million(after)?)
-    };
-    let noun = if millions.value == 1 {
-        "Millioun"
-    } else {
-        "Milliounen"
-    };
-    let head = if millions.value == 1 {
-        "eng".to_string()
-    } else {
-        millions.spelling
-    };
-    let mut spelling = format!("{head} {noun}");
-    if let Some(rest) = &rest {
-        spelling.push(' ');
-        spelling.push_str(&rest.spelling);
     }
     Some(NumberReading {
-        value: millions.value * 1_000_000 + rest.map_or(0, |rest| rest.value),
-        spelling,
+        value,
+        spelling: parts.join(" "),
     })
 }
 
@@ -1805,7 +1843,6 @@ mod category {
     pub const PLURAL: &str = "plural";
     pub const GENDER: &str = "gender";
     pub const VERB: &str = "verb";
-    pub const CONTRACTION: &str = "contraction";
     pub const TYPOGRAPHY: &str = "typography";
 }
 
@@ -1928,13 +1965,9 @@ const UNITS: [&str; 30] = [
     "Joer",
     "Pabeier",
 ];
-/// "an" is left out: it is also the conjunction "and" (tëschent X an dem Y).
-const CONTRACTIONS: [(&str, &str); 4] =
-    [("vun", "vum"), ("zu", "zum"), ("bei", "beim"), ("op", "um")];
 const SUBJECT_PRONOUNS: [&str; 14] = [
     "ech", "du", "de", "hien", "hatt", "si", "se", "et", "mir", "mer", "dir", "der", "en", "s",
 ];
-const POSSESSIVES: [&str; 6] = ["säi", "säin", "seng", "hir", "hiren", "hire"];
 /// Abbreviations written with a full stop, from ZLS 8.5.1 ("ca., d. h., Jh., wgl., z. B., allg.,
 /// Dr., evtl., Nr., Tel., asw., etc.") and in common use.
 const ABBREVIATIONS: [&str; 20] = [
@@ -2021,37 +2054,58 @@ impl<'a> Analysis<'a> {
     /// When `word` is a present-tense form of a verb, that verb's present form for `person`
     /// (0 ech … 5 si) and the verb's lemma.
     fn present_form(&self, word: &Word, person: usize) -> Option<(String, StaticStr)> {
-        let dictionary = self.dictionary;
-        let form = word.form.as_str();
-        // The verb whose present the form is, with or without its n ("hu" for "hunn"): "kënnt"
-        // is in the tables of both "kënnen" and "kommen".
-        let is_present = |forms: &[StaticStr; 8]| {
-            forms[2..8].iter().any(|cell| {
-                cell.split(" / ").any(|alternative| {
-                    let verb = alternative.split(' ').next().unwrap_or("");
-                    verb == form
-                        || [(verb, form), (form, verb)]
-                            .iter()
-                            .any(|&(longer, shorter)| {
-                                !shorter.is_empty()
-                                    && matches!(longer.strip_prefix(shorter), Some("n" | "nn"))
-                            })
-                })
-            })
-        };
-        let (forms, lemma) = dictionary
-            .entry_indices(word.record)
-            .iter()
-            .find_map(|&i| {
-                dictionary
-                    .conjugations
-                    .get(&(i as u32))
-                    .filter(|forms| is_present(forms))
-                    .map(|forms| (forms, dictionary.entries[i].lemma))
-            })?;
+        let (forms, lemma, cells) = best_table(self.dictionary, word)?;
         let wanted = first_form(forms[2 + person]).to_string();
-        (!wanted.is_empty()).then_some((wanted, lemma))
+        (cells > 0 && !wanted.is_empty()).then_some((wanted, lemma))
     }
+}
+
+/// How many present-tense cells of a conjugation table hold the form, with or without its n
+/// ("hu" for "hunn", "komme" for "kommen").
+fn present_cells(forms: &[StaticStr; 8], form: &str) -> usize {
+    forms[2..8]
+        .iter()
+        .filter(|cell| {
+            cell.split(" / ").any(|alternative| {
+                let verb = alternative.split(' ').next().unwrap_or("");
+                verb == form
+                    || verb.strip_suffix('n') == Some(form)
+                    || verb.strip_suffix("nn") == Some(form)
+                    || form.strip_suffix('n') == Some(verb)
+                    || form.strip_suffix("nn") == Some(verb)
+            })
+        })
+        .count()
+}
+
+/// The conjugation table of the verb the word most likely belongs to, with its lemma and how many
+/// present cells hold the word. A form of two verbs goes with the more basic one, by the LOD's
+/// learner level (1, 2… for the core vocabulary, 0 for the rest): "seet" is "soen" (level 2)
+/// before "seeën" (0), "freet" "froen" before "freeën". Then with the one where it fills more
+/// cells.
+fn best_table<'a>(
+    dictionary: &'a Dictionary,
+    word: &Word,
+) -> Option<(&'a [StaticStr; 8], StaticStr, usize)> {
+    let form = word.form.as_str();
+    type Candidate<'t> = ((u8, usize), &'t [StaticStr; 8], StaticStr, usize);
+    let mut best: Option<Candidate> = None;
+    for &i in dictionary.entry_indices(word.record).iter() {
+        let Some(forms) = dictionary.conjugations.get(&(i as u32)) else {
+            continue;
+        };
+        let cells = present_cells(forms, form);
+        let level = match dictionary.entries[i].level {
+            0 => u8::MAX,
+            level => level,
+        };
+        // lower is better: the level, then more cells
+        let rank = (level, usize::MAX - cells);
+        if best.is_none_or(|(best_rank, ..)| rank < best_rank) {
+            best = Some((rank, forms, dictionary.entries[i].lemma, cells));
+        }
+    }
+    best.map(|(_, forms, lemma, cells)| (forms, lemma, cells))
 }
 
 /// First form in a conjugation table cell: "spillen / spille" → "spillen", "ginn eran" → "ginn".
@@ -2293,6 +2347,26 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
             let Some((first, first_record, second, second_record)) = &word.compound else {
                 return;
             };
+            // Noun + noun is how Luxembourgish makes new words ("Medezinstudent",
+            // "Gewaltzeenen"): no remark. Other splits ("Laf" + "technik", "dohi" + "gefall")
+            // are worth a look.
+            let only_nouns = |record: &FormRecord| {
+                let entries = dictionary.entry_indices(Some(*record));
+                !entries.is_empty()
+                    && entries
+                        .iter()
+                        .all(|&i| dictionary.entries[i].part_of_speech == "SUBST")
+            };
+            // ... unless a known word is one typing slip away ("Bandwonn" for "Brandwonn",
+            // "Gebuertdag" for "Gebuertsdag"): then it is more likely a typo.
+            let fixes = dictionary.suggest_spelling(&word.normalized, 3);
+            let near = fixes
+                .iter()
+                .any(|fix| one_edit_apart(&word.normalized, fix));
+            if starts_upper(text) && only_nouns(first_record) && only_nouns(second_record) && !near
+            {
+                return;
+            }
             let mut values = params(&[("word", text), ("first", first), ("second", second)]);
             add_glosses(dictionary, &mut values, &FIRST_GLOSSES, Some(*first_record));
             add_glosses(
@@ -2306,7 +2380,7 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                 category::COMPOUND,
                 "compound",
                 values,
-                dictionary.suggest_spelling(&word.normalized, 3),
+                fixes,
             );
         }
         Status::Attested => add(
@@ -2359,13 +2433,16 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
         }
         Status::Case => {
             let form = word.form.as_str();
-            if starts_upper(text) {
-                // An adjective or a verb used as a noun takes a capital ("beim Skaten", "dee
-                // Jonken", "zënter Kuerzem"), and so does an adjective in a name ("Kanadeschen
-                // Dollar"): the LOD lists the word in lower case only, yet the capital is right.
-                if is_nominalized(analysis, index) || starts_named_term(analysis, index) {
-                    return;
-                }
+            if starts_upper(text)
+                && (used_as_noun(analysis, index)
+                    // An adjective or a verb used as a noun takes a capital ("beim Skaten", "dee
+                    // Jonken", "zënter Kuerzem"), and so does an adjective in a name
+                    // ("Kanadeschen Dollar"): the LOD lists the word in lower case only.
+                    || is_nominalized(analysis, index)
+                    || starts_named_term(analysis, index))
+            {
+                // "eisen Eelsten", "d'Faaschten", "am Zweete Weltkrich": the capital is right.
+            } else if starts_upper(text) {
                 // A capital the LOD does not have: the lower-case word, then capitalised neighbours.
                 let mut fixes = vec![form.to_string()];
                 fixes.extend(
@@ -2424,6 +2501,37 @@ fn reads_as_nominalized(dictionary: &Dictionary, form: &str, infinitive: bool) -
                 infinitive
                     && (entry.lemma == lower
                         || entry.lemma.strip_suffix('n') == Some(lower.as_str()))
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Words that take a determiner: after one of them, a capitalised adjective, infinitive or
+/// number is used as a noun ("eisen Eelsten", "d'Faaschten", "beim Schwammen", "eppes Neies").
+const NOUN_MAKERS: [&str; 62] = [
+    "d'", "d’", "de", "den", "der", "dat", "déi", "dem", "deen", "dee", "deem", "deenen", "e",
+    "en", "eng", "engem", "enger", "engen", "ee", "een", "eise", "eist", "eisen", "eiser", "eisem",
+    "mäi", "mäin", "meng", "mengem", "menger", "mengen", "däi", "däin", "deng", "säi", "säin",
+    "seng", "sengem", "senger", "sengen", "hir", "hire", "hiren", "är", "äre", "ären", "beim",
+    "am", "vum", "zum", "um", "nom", "virum", "ville", "vill", "puer", "all", "eppes", "näischt",
+    "keen", "kee", "keng",
+];
+
+/// The lower-case reading of a capitalised word is an infinitive ("Spullen", "Schwammen") or an
+/// inflected adjective ("Franséischen", "Alen"): written with a capital, it is used as a noun.
+fn lower_reads_as_noun(dictionary: &Dictionary, form: &str) -> bool {
+    let lower = lowercase_first(form);
+    let Some(record) = dictionary.valid_record(&lower) else {
+        return false;
+    };
+    dictionary.entry_indices(Some(record)).iter().any(|&i| {
+        let entry = &dictionary.entries[i];
+        match entry.part_of_speech {
+            "ADJ" => entry.lemma != lower,
+            "VRB" => {
+                entry.lemma == lower
+                    || dictionary.n_dropped.get(entry.lemma) == Some(&lower.as_str())
             }
             _ => false,
         }
@@ -2702,6 +2810,133 @@ fn starts_named_term(analysis: &Analysis, index: usize) -> bool {
     })
 }
 
+/// Prepositions after which a capitalised adjective or infinitive is a noun: "vu Klengem un",
+/// "zënter Kuerzem", "mat Programméieren", "als Éischten".
+const NOUN_PREPOSITIONS: [&str; 22] = [
+    "vu", "vun", "zënter", "zanter", "viru", "virun", "mat", "bei", "als", "u", "un", "no", "ouni",
+    "fir", "iwwer", "iwwerem", "ënner", "mam", "duerch", "géint", "deene", "där",
+];
+
+/// A word that can come before the noun in a noun phrase: a determiner, a preposition with or
+/// without its article, a number, "meescht", or a lower-case inflected adjective ("no
+/// stonnelaangem Waarden").
+fn noun_phrase_word(analysis: &Analysis, index: usize) -> bool {
+    let lower = analysis.lowercase(index);
+    let lower = lower.as_str();
+    if NOUN_MAKERS.contains(&lower)
+        || NOUN_PREPOSITIONS.contains(&lower)
+        || NUMBER_WORDS.contains(&lower)
+        || matches!(
+            lower,
+            "meescht" | "des" | "dës" | "dësem" | "dëser" | "dësen" | "dëse"
+        )
+    {
+        return true;
+    }
+    let word = &analysis.words[index];
+    !starts_upper(&word.text)
+        && analysis.only_part_of_speech(word, "ADJ")
+        && ["e", "en", "em", "er", "es"]
+            .iter()
+            .any(|ending| lower.ends_with(ending))
+}
+
+/// A capitalised noun of the LOD one typing slip away (a letter missing, added, replaced or two
+/// swapped): "Kache" for "Knache", "Aler" for "Alter" are more likely typos than nouns made from
+/// "kachen" or "al".
+fn near_a_noun(dictionary: &Dictionary, word: &str) -> bool {
+    dictionary
+        .suggest_spelling(word, 6)
+        .iter()
+        .any(|candidate| {
+            starts_upper(candidate)
+                && one_edit_apart(word, candidate)
+                && dictionary.valid_record(candidate).is_some_and(|record| {
+                    dictionary
+                        .entry_indices(Some(record))
+                        .iter()
+                        .all(|&i| dictionary.entries[i].part_of_speech == "SUBST")
+                })
+        })
+}
+
+fn one_edit_apart(a: &str, b: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a == b || a.len().abs_diff(b.len()) > 1 {
+        return false;
+    }
+    let start = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let end = a[start..]
+        .iter()
+        .rev()
+        .zip(b[start..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let (rest_a, rest_b) = (a.len() - start - end, b.len() - start - end);
+    // one letter replaced, added or missing, or two neighbours swapped
+    rest_a.max(rest_b) <= 1
+        || (rest_a == 2 && rest_b == 2 && a[start] == b[start + 1] && a[start + 1] == b[start])
+}
+
+/// The form is the entry's past participle with an adjective ending: "Beschëllegten",
+/// "Blesséierten" (used as nouns).
+fn inflected_participle(dictionary: &Dictionary, entry: usize, form: &str) -> bool {
+    let Some(table) = dictionary.conjugations.get(&(entry as u32)) else {
+        return false;
+    };
+    table[1].split(" / ").any(|participle| {
+        form.strip_prefix(participle)
+            .is_some_and(|ending| matches!(ending, "e" | "en" | "em" | "er" | "es"))
+    })
+}
+
+/// A capitalised word the LOD only has in lower case, used as a noun: after a determiner or a
+/// preposition with its article ("eisen Eelsten", "d'Faaschten", "beim Schwammen"), or as the
+/// first part of a name before a capitalised noun ("Zweete Weltkrich", "Gréng Zeiselen").
+fn used_as_noun(analysis: &Analysis, index: usize) -> bool {
+    let words = analysis.words;
+    // Only an adjective, a number or a verb's infinitive becomes a noun: "d'Baut" is a typo of
+    // "d'Braut", not the verb form "baut" as a noun.
+    let dictionary = analysis.dictionary;
+    let form = words[index].form.as_str();
+    let nominal = dictionary
+        .entry_indices(words[index].record)
+        .iter()
+        .any(|&i| {
+            let entry = &dictionary.entries[i];
+            match entry.part_of_speech {
+                // an adjective used as a noun takes an ending ("Alen", "Eelsten"; "Séier" alone is
+                // more likely a typo of "Stéier")
+                "ADJ" => entry.lemma != form,
+                "NB" => true,
+                "VRB" => {
+                    entry.lemma == form
+                        || dictionary.n_dropped.get(entry.lemma) == Some(&form)
+                        || inflected_participle(dictionary, i, form)
+                }
+                _ => false,
+            }
+        });
+    if !nominal {
+        return false;
+    }
+    let joined = index > 0 && (is_blank(analysis.gap_after(index - 1)) || words[index - 1].clitic);
+    // After a determiner the noun reading is clear. After a preposition or an adjective it is
+    // weaker: a LOD noun one typing slip away wins ("Kache" for "Knache", "Aler" for "Alter").
+    if joined && NOUN_MAKERS.contains(&analysis.lowercase(index - 1).as_str()) {
+        return true;
+    }
+    if joined
+        && noun_phrase_word(analysis, index - 1)
+        && !near_a_noun(dictionary, &words[index].normalized)
+    {
+        return true;
+    }
+    analysis.next_is_adjacent(index)
+        && starts_upper(&words[index + 1].text)
+        && analysis.only_part_of_speech(&words[index + 1], "SUBST")
+}
+
 /// The n-rule (Eifeler Regel): a final n stays before a vowel and n d t z h, and at the end of a
 /// sentence; it drops before other consonants.
 fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
@@ -2883,6 +3118,9 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     {
         return;
     }
+    if n_drop_optional(analysis, index) || spelt_with_vowel(next) {
+        return;
+    }
     // A Y that drops the n is the consonant [j]: the "sound" parameter says so, since the letter
     // alone looks like a vowel.
     let sound = if next_initial == "y" { "j" } else { "" };
@@ -2968,6 +3206,71 @@ fn n_drop_issue(
 /// them: "der Däiwel", "der Doud", "géint der Owend", "géint der Mëtteg", "géint der Moien",
 /// "wat der Jomer".
 const OLD_DER_NOUNS: [&str; 6] = ["Däiwel", "Doud", "Owend", "Mëtteg", "Moien", "Jomer"];
+
+/// Nouns where the official spelling (ZLS, "D'n-Reegel" 6.1.2.2) lets the n stay or drop: those
+/// in -äin ("de Wäin gëtt" or "de Wäi gëtt") and the one-syllable ones in -een, compounds too
+/// ("e Steen geheien", "d'Schlësselbeen briechen"). Veen, Zeen and Geen always keep it.
+fn n_drop_optional(analysis: &Analysis, index: usize) -> bool {
+    let word = &analysis.words[index];
+    if is_town(analysis, word) {
+        return true;
+    }
+    if !analysis.only_part_of_speech(word, "SUBST") {
+        return false;
+    }
+    let lowercase = analysis.lowercase(index);
+    if lowercase.ends_with("äin") {
+        return true;
+    }
+    // Sireen, Pyreen and Werbeen are words of two syllables, not compounds of Reen or Been
+    ["been", "reen", "steen", "seen"]
+        .iter()
+        .any(|head| lowercase.ends_with(head))
+        && !matches!(lowercase.as_str(), "sireen" | "pyreen" | "werbeen")
+}
+
+/// A town or village, where the n may stay ("op Veianen fueren", 6.4): the LOD gives places a
+/// gender only when they are countries or regions (Asien, Italien), which follow the n-rule.
+/// Names in -ien (Skandinavien), names of several words (Indeschen Ozean) and the plural names
+/// of mountains and islands (d'Alpe, d'Ardennen) follow it too.
+fn is_town(analysis: &Analysis, word: &Word) -> bool {
+    let dictionary = analysis.dictionary;
+    let entries = dictionary.entry_indices(word.record);
+    !entries.is_empty()
+        && entries.iter().all(|&i| {
+            let entry = &dictionary.entries[i];
+            entry.part_of_speech == "NP"
+                && entry.gender.is_empty()
+                && entry.lemma.ends_with("en")
+                && !entry.lemma.ends_with("ien")
+                && !entry.lemma.contains(' ')
+                && !PLURAL_PLACES.contains(&entry.lemma)
+        })
+}
+/// The LOD's names of places without a gender that are plurals.
+const PLURAL_PLACES: [&str; 11] = [
+    "Alpen",
+    "Ardennen",
+    "Kapverden",
+    "Kasematten",
+    "Komoren",
+    "Malediven",
+    "Marshallinselen",
+    "Philippinnen",
+    "Redemptoristen",
+    "Salomonen",
+    "Seychellen",
+];
+
+/// An initialism whose first letter may be spelt out with a vowel ("den LCTO-Programm", "en
+/// SNJ-Ausfluch": Ell, Ess) or read as a word: the n may stay or drop, so the rule says nothing.
+fn spelt_with_vowel(next: &Word) -> bool {
+    let mut letters = next.text.chars();
+    let (Some(first), Some(second)) = (letters.next(), letters.next()) else {
+        return false;
+    };
+    second.is_uppercase() && matches!(first, 'C' | 'F' | 'L' | 'M' | 'R' | 'S' | 'X' | 'Y')
+}
 
 /// "ee" and "een" are also the pronoun "one" ("datt ee Musek…", "Fir dat brauch een
 /// Erfarung"): only read them as an article after a preposition, or after a verb that has its
@@ -3171,9 +3474,9 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
             !is_n_form_of(entry.lemma)
         });
     let span = analysis.slice(next.start, noun.end);
-    // "Beim Plënneren", "am Franséischen", "kee Bongen": the plural of a noun that is also an
-    // infinitive or an adjective in lower case reads as that word used as a noun, singular
-    // (ZLS 8.1.2, 8.1.3). "Um Ordre du jour": a foreign name in several words.
+    // "Beim Plënneren", "am Franséischen", "kee Bongen", "beim Spullen": the plural of a noun
+    // that is also an infinitive or an adjective in lower case reads as that word used as a
+    // noun, singular (ZLS 8.1.2, 8.1.3). "Um Ordre du jour": a foreign name in several words.
     // "am Garer Quartier": a place adjective in -er before a name's noun, not a plural.
     let place_adjective = noun_form.ends_with("er")
         && analysis.next_is_adjacent(noun_index)
@@ -3181,6 +3484,7 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
     let is_plural = is_plural
         && !place_adjective
         && !reads_as_nominalized(dictionary, noun_form, lowercase.ends_with('m'))
+        && !lower_reads_as_noun(dictionary, noun_form)
         && !starts_multiword_lemma(analysis, noun_index);
 
     // A plural noun after a singular determiner that has a plural form.
@@ -3226,7 +3530,14 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
         let is_lemma = entry.lemma == noun_form;
         // The plural, also without its n: "vun den Immobilie kuckt" ("den" before a singular
         // feminine noun is no article, so it is the dative plural).
-        let n_less_plural = !is_lemma || lowercase == "den";
+        // Only where the n may drop: "den Neurochirurgie um" would keep it, so it is no plural.
+        let n_may_drop = analysis.next_is_adjacent(noun_index)
+            && analysis
+                .lowercase(noun_index + 1)
+                .chars()
+                .next()
+                .is_some_and(|c| N_DROP_INITIALS.contains(c));
+        let n_less_plural = !is_lemma || lowercase == "den" && n_may_drop;
         let is_plural_form = !entry.plural.is_empty()
             && entry
                 .plural
@@ -3235,11 +3546,17 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
         // A noun the LOD lists with a gender but no plural, that looks like one: it is used
         // only in the plural ("d'Zënsen", "d'Otemweeër", "aus den Drëssegerjoren"), so a
         // determiner that is also plural fits it ("dem Chamber" stays checked).
+        // Such a lemma is itself a plural, or ends in one: "Zënsen", "Otemweeër" (Weeër),
+        // "Drëssegerjoren" (Joren), or feminine ("d'Ausgruewungen", "den ëffentleche Finanzen").
+        // "d'Alter", "de Zocker" are singular nouns with no plural.
         let plural_only = determiner_can_be_plural
             && entry.plural.is_empty()
             && ["en", "er", "ër"]
                 .iter()
-                .any(|ending| entry.lemma.ends_with(ending));
+                .any(|ending| entry.lemma.ends_with(ending))
+            && (entry.gender == "F"
+                || lemma_is_plural(dictionary, entry.lemma)
+                || PLURAL_ONLY_NOUNS.contains(&entry.lemma));
         if entry.part_of_speech != "SUBST" || entry.gender.is_empty() || plural_only {
             sure = false;
             continue;
@@ -3327,6 +3644,37 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
     ));
 }
 
+/// Nouns used only in the plural whose singular the LOD does not list: "d'Zënsen", "keng Alimenter".
+const PLURAL_ONLY_NOUNS: [&str; 2] = ["Alimenter", "Zënsen"];
+
+/// The noun `lemma` is the plural of another noun, or ends in one: "Otemweeër" (Wee),
+/// "Drëssegerjoren" (Joer).
+fn lemma_is_plural(dictionary: &Dictionary, lemma: &str) -> bool {
+    let chars: Vec<char> = lemma.chars().collect();
+    (0..chars.len().saturating_sub(3)).any(|start| {
+        let tail: String = chars[start..].iter().collect();
+        let tail = if start == 0 {
+            tail
+        } else {
+            uppercase_first(&tail)
+        };
+        // the plural's own record, or its singular's: "Ausgruewungen" of "Ausgruewung"
+        let singulars = ["", "n", "en", "er", "ër"]
+            .iter()
+            .filter_map(|ending| tail.strip_suffix(ending).filter(|rest| !rest.is_empty()));
+        let tail = tail.as_str();
+        singulars.into_iter().any(|singular| {
+            let record = dictionary.valid_record(singular);
+            dictionary.entry_indices(record).iter().any(|&i| {
+                let entry = &dictionary.entries[i];
+                entry.part_of_speech == "SUBST"
+                    && entry.lemma != tail
+                    && entry.plural.split(", ").any(|plural| plural == tail)
+            })
+        })
+    })
+}
+
 /// "ech" / "du" right before a verb whose form with its n is not that person's form:
 /// "ech brauche" is not "ech brauchen" (the LOD conjugates "ech brauch"), so the n rule
 /// has nothing to restore.
@@ -3380,6 +3728,37 @@ fn fit_n(analysis: &Analysis, verb_index: usize, wanted: &str) -> String {
     wanted.to_string()
 }
 
+/// Every fix, whatever the rule, gets the n-rule for the word after it: "zwou Stonn vun" →
+/// "Stonne" (not "Stonnen", then a second remark), "drenken Kaffi" → "drénke". One click per
+/// mistake. The n-rule's own remarks are already right.
+fn fit_fixes_to_n_rule(analysis: &Analysis, issues: &mut [Issue]) {
+    for issue in issues.iter_mut() {
+        if issue.category == category::N_RULE {
+            continue;
+        }
+        // The last word the fix replaces.
+        let last = match issue.end {
+            Some(end) => (issue.word_index..analysis.words.len())
+                .find(|&j| analysis.utf16_offsets[analysis.words[j].end] == end),
+            None => Some(issue.word_index),
+        };
+        let Some(last) = last else { continue };
+        for fix in issue.fixes.iter_mut() {
+            let (head, tail) = match fix.rfind(' ') {
+                Some(space) => fix.split_at(space + 1),
+                None => ("", fix.as_str()),
+            };
+            if tail.is_empty() {
+                continue;
+            }
+            let fitted = fit_n(analysis, last, tail);
+            if fitted != tail {
+                *fix = format!("{head}{fitted}");
+            }
+        }
+    }
+}
+
 /// The persons a subject pronoun stands for, as a mask (bit 0 ech … bit 5 si).
 fn pronoun_persons(word: &str) -> u32 {
     match word {
@@ -3419,12 +3798,7 @@ fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     if wild || persons & (1 << person) != 0 || !analysis.only_part_of_speech(verb, "VRB") {
         return;
     }
-    let conjugation = dictionary.entry_indices(verb.record).iter().find_map(|&i| {
-        dictionary
-            .conjugations
-            .get(&(i as u32))
-            .map(|forms| (forms, dictionary.entries[i].lemma))
-    });
+    let conjugation = best_table(dictionary, verb).map(|(forms, lemma, _)| (forms, lemma));
     let fix = match conjugation {
         Some((forms, lemma)) => {
             let wanted = first_form(forms[2 + person]);
@@ -3463,7 +3837,7 @@ fn check_ech_du_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     ));
 }
 
-// ---------- second pass (Nov 2026): agreement, numbers, contractions, ze, typography ----------
+// ---------- second pass (Nov 2026): agreement, numbers, ze, typography ----------
 // Each rule was measured on the LOD example sentences (the test corpus) to keep false alarms rare.
 
 /// A subject pronoun at the start of a sentence, then a finite verb in the wrong person:
@@ -3555,7 +3929,8 @@ fn check_number_word(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
     if !NUMBER_WORDS.contains(&lowercase.as_str()) {
         return;
     }
-    // "allen zwee" means both; "d'aacht Joerhonnert" is an ordinal after an article.
+    // "allen zwee" means both; "d'aacht Joerhonnert" is an ordinal after an article. After the
+    // plural "déi" the number counts: "déi zwee Hënn".
     let after_article_or_all = index > 0
         && matches!(
             analysis.lowercase(index - 1).as_str(),
@@ -3567,7 +3942,6 @@ fn check_number_word(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>)
                 | "den"
                 | "de"
                 | "dat"
-                | "déi"
                 | "dem"
                 | "der"
                 | "am"
@@ -3686,44 +4060,6 @@ fn check_number_plural(
         // with the n-rule: "zwou Kopie gemaach" → "zwou Kopië gemaach" (ZLS 2.2.5)
         vec![fit_n(analysis, noun_index, plural)],
     ));
-}
-
-/// Preposition + "dem" before a noun: "vun dem Bësch" → "vum Bësch".
-fn check_contraction(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
-    let words = analysis.words;
-    let lowercase = analysis.lowercase(index);
-    let Some(&(_, contracted)) = CONTRACTIONS
-        .iter()
-        .find(|(preposition, _)| *preposition == lowercase)
-    else {
-        return;
-    };
-    if !analysis.next_is_adjacent(index) || analysis.lowercase(index + 1) != "dem" {
-        return;
-    }
-    let Some(noun_index) = analysis.noun_after(index + 1) else {
-        return;
-    };
-    // "vun dem Mann säin Auto": "dem" belongs to the possessive, not to the preposition
-    let possessive = analysis.next_is_adjacent(noun_index)
-        && POSSESSIVES.contains(&analysis.lowercase(noun_index + 1).as_str());
-    if possessive {
-        return;
-    }
-    let text = words[index].text.as_str();
-    let phrase = analysis.slice(words[index].start, words[index + 1].end);
-    let contracted = keep_case(text, contracted);
-    issues.push(
-        Issue::new(
-            index,
-            Severity::Warning,
-            category::CONTRACTION,
-            "contraction",
-            params(&[("phrase", &phrase), ("contracted", &contracted)]),
-            vec![contracted],
-        )
-        .ending_at(analysis.utf16_offsets[words[index + 1].end]),
-    );
 }
 
 /// "ze" + finite verb: "ze spillt" → "ze spillen".
@@ -3978,6 +4314,58 @@ fn check_space_after_apostrophe(analysis: &Analysis, index: usize, issues: &mut 
     );
 }
 
+/// Abbreviations of single letters with a point each: "z. B.", "d. h.", "a. d. R." (8.5.1). Their
+/// letters are no words (no capital, no n-rule), and a point is followed by a space: "z.B." →
+/// "z. B.".
+fn check_letter_abbreviations(analysis: &Analysis, issues: &mut Vec<Issue>) {
+    let words = analysis.words;
+    let chars = analysis.chars;
+    let letter_point = |index: usize| {
+        let word = &words[index];
+        word.end - word.start == 1 && chars.get(word.end) == Some(&'.')
+    };
+    // the next letter of the same abbreviation: right after the point, or after one space
+    let follows = |index: usize| {
+        index + 1 < words.len() && letter_point(index + 1) && {
+            let gap = words[index + 1].start - (words[index].end + 1);
+            gap == 0 || (gap == 1 && chars[words[index].end + 1] == ' ')
+        }
+    };
+    let mut index = 0;
+    while index < words.len() {
+        if !letter_point(index) || !follows(index) {
+            index += 1;
+            continue;
+        }
+        let first = index;
+        while follows(index) {
+            index += 1;
+        }
+        issues.retain(|issue| !(first..=index).contains(&issue.word_index));
+        let glued = (first..index).any(|i| words[i + 1].start == words[i].end + 1);
+        let current = analysis.slice(words[first].start, words[index].end + 1);
+        // the LOD writes "k.o." (knocked out) in one piece
+        if glued && current.to_lowercase() != "k.o." {
+            let fixed = (first..=index)
+                .map(|i| format!("{}.", words[i].text))
+                .collect::<Vec<_>>()
+                .join(" ");
+            issues.push(
+                Issue::new(
+                    first,
+                    Severity::Warning,
+                    category::TYPOGRAPHY,
+                    "abbreviation_space",
+                    params(&[("current", &current), ("fixed", &fixed)]),
+                    vec![fixed.clone()],
+                )
+                .ending_at(analysis.utf16_offsets[words[index].end + 1]),
+            );
+        }
+        index += 1;
+    }
+}
+
 fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut utf16_offsets: Vec<usize> = Vec::with_capacity(chars.len() + 1);
@@ -4014,7 +4402,6 @@ fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
     for index in 0..words.len() {
         check_pronoun_verb(&analysis, index, &mut issues);
         check_number_word(&analysis, index, &mut issues);
-        check_contraction(&analysis, index, &mut issues);
         check_ze_infinitive(&analysis, index, &mut issues);
         check_repeated_word(&analysis, index, &mut issues);
         check_capital_start(&analysis, index, &mut issues);
@@ -4027,7 +4414,9 @@ fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
         .collect();
     check_digits_plural(&analysis, &tokens, &word_at, &mut issues);
     check_space_before_punctuation(&analysis, &tokens, &word_at, &mut issues);
+    check_letter_abbreviations(&analysis, &mut issues);
 
+    fit_fixes_to_n_rule(&analysis, &mut issues);
     issues.sort_by_key(|issue| utf16_offsets[words[issue.word_index].start]);
     let json = write_json(&tokens, &words, &issues, dictionary, &utf16_offsets);
     // SAFETY: rules 1 and 2 of the module state: no `last_word()` reference is alive during `analyze`.
