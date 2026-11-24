@@ -2188,6 +2188,30 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     {
         return;
     }
+    // ZLS 4.4.1: before "de" / "du" / "d'" of the 2nd person, the connecting s stands apart: "ob
+    // s de", "wat s de", "wann s de". Only for words the LOD does not know with that s ("Jobs").
+    if word.status != Status::Ok && analysis.next_is_adjacent(index) {
+        let next = analysis.lowercase(index + 1);
+        if let Some(stem) = lower.strip_suffix('s') {
+            let known_stem = is_conjunction(stem)
+                || matches!(
+                    stem,
+                    "wat" | "wou" | "wien" | "wiem" | "wéini" | "firwat" | "wouhin" | "wouhier"
+                );
+            let s_ending = stem.ends_with(['s', 'x', 'z']);
+            if known_stem && !s_ending && matches!(next.as_str(), "de" | "du" | "d'") {
+                let fixed = format!("{} s", &text[..text.len() - 1]);
+                add(
+                    Severity::Error,
+                    category::SPELLING,
+                    "s_apart",
+                    params(&[("word", text), ("fixed", &fixed)]),
+                    vec![fixed],
+                );
+                return;
+            }
+        }
+    }
     match word.status {
         Status::Ok | Status::Speller | Status::Number => {}
         Status::NumberToFix => {
@@ -2672,7 +2696,23 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     let next_initial = next
         .map(|next| initial(&next.normalized))
         .unwrap_or_default();
-    let adjacent = analysis.next_is_adjacent(index);
+    // ZLS 6.1.2.6: the n-rule goes through an opening quotation mark ("Et nennt een hien de
+    // „Kropemann“"). Only after a determiner: a word quoted for itself may keep its n for the
+    // sense ("D'Verb „béien“").
+    let quoted = index + 1 < analysis.words.len() && {
+        let gap = analysis.gap_after(index);
+        let marks = gap.iter().filter(|&&c| !is_space(c)).count();
+        let last = gap.last().copied().unwrap_or(' ');
+        // and a word the LOD knows: an unknown name keeps its own sound ("den „James Bond“")
+        marks == 1
+            && matches!(analysis.words[index + 1].status, Status::Ok | Status::Case)
+            && is_space(gap[0])
+            && matches!(last, '\u{201e}' | '\u{201c}' | '"' | '\u{ab}' | '\u{201a}')
+            && dictionary
+                .determiners
+                .contains_key(analysis.lowercase(index).as_str())
+    };
+    let adjacent = analysis.next_is_adjacent(index) || quoted;
     let after_s = index > 0 && analysis.words[index - 1].normalized.ends_with('s');
 
     // At the start of a sentence the capital is the sentence's: "E nervösen Houscht" is the
@@ -2711,7 +2751,7 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     // ZLS 6.1.1: before a number in digits, the n follows its reading ("den 1. Abrëll" for
     // éischten, "de 5. Abrëll" for fënneften).
     if let Some((digits, said)) = number_after(analysis, index) {
-        if among_foreign_words(analysis, index) {
+        if among_foreign_words(analysis, index, false) {
             return;
         }
         let said = said.to_string();
@@ -2778,19 +2818,35 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                 let length = text.chars().count();
                 let nix_da =
                     word.form == "da" && index > 0 && analysis.lowercase(index - 1) == "nix";
-                let foreign = among_foreign_words(analysis, index);
+                // Nor a name: after a first name ("Robert Wise,"), or in capitals ("BAS DE /").
+                let foreign = among_foreign_words(analysis, index, true);
+                let after_name = index > 0
+                    && parts_of_speech(dictionary, &analysis.words[index - 1]).contains(&"NP");
+                let capitals = length > 1 && !text.chars().any(char::is_lowercase);
                 let mark = if sentence_end(gap) {
                     String::new()
                 } else if let Some(mark) = pause_mark(gap).filter(|&mark| {
-                    length > 1 && !nix_da && !foreign && !(mark == ':' && length <= 2)
+                    length > 1
+                        && !nix_da
+                        && !foreign
+                        && !after_name
+                        && !capitals
+                        && !(mark == ':' && length <= 2)
                 }) {
                     mark.to_string()
                 } else {
                     return;
                 };
+                // Before a punctuation mark, the word is more often a name or a foreign word
+                // than at the end of a sentence: a warning.
+                let severity = if mark.is_empty() {
+                    Severity::Error
+                } else {
+                    Severity::Warning
+                };
                 issues.push(Issue::new(
                     index,
-                    Severity::Error,
+                    severity,
                     category::N_RULE,
                     "n_end",
                     params(&[("full", &full), ("mark", &mark)]),
@@ -2827,10 +2883,16 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
 /// conjunction: a name or a title in another language ("vaterländische Geschichte, Kunst", "Den
 /// 85. Jahrestag", "La notte,", "marxisme et psychanalyse,"), where the n-rule does not apply.
 /// Used for the rules beyond the next word (punctuation, digits), which are the least sure.
-fn among_foreign_words(analysis: &Analysis, index: usize) -> bool {
-    let known = |position: usize| {
-        let word = &analysis.words[position];
-        matches!(word.status, Status::Ok | Status::Case) || word.clitic
+/// With `before`, the word before counts too; without, only the word after (after a number:
+/// "nodeem Paekche schonn 660" is still Luxembourgish).
+fn among_foreign_words(analysis: &Analysis, index: usize, before: bool) -> bool {
+    // A compound or a word of the spellchecker.lu list is Luxembourgish; an unknown word or a
+    // name is not.
+    let foreign = |position: usize| {
+        matches!(
+            analysis.words[position].status,
+            Status::Unknown | Status::Name
+        )
     };
     let french = index > 0
         && matches!(
@@ -2838,8 +2900,8 @@ fn among_foreign_words(analysis: &Analysis, index: usize) -> bool {
             "la" | "le" | "les" | "et" | "du" | "des" | "l'"
         );
     french
-        || (index > 0 && !known(index - 1))
-        || (index + 1 < analysis.words.len() && !known(index + 1))
+        || (before && index > 0 && foreign(index - 1))
+        || (index + 1 < analysis.words.len() && foreign(index + 1))
 }
 
 /// The `n_drop` remark on word `index`, when the LOD has its form without the n.
@@ -2938,6 +3000,60 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
     let word = &words[index];
     let text = word.text.as_str();
     let lowercase = analysis.lowercase(index);
+    // "d'accord", "d'office": a word of its own in the LOD, which ZLS 7.1 writes in lower case
+    // ("d'accord sinn"), not the article before a noun ("d'Accord" → "den Accord" would change
+    // the meaning).
+    if lowercase == "d'" && index + 1 < words.len() && words[index + 1].start == word.end {
+        let next = &words[index + 1];
+        let joined = format!("d'{}", next.normalized.to_lowercase());
+        if let Some(record) = dictionary.valid_record(&joined) {
+            // Only as a predicate, after a form of "sinn" or "ginn" ("hien ass d'Accord", "war
+            // hien direkt d'Accord"): elsewhere it may be a name ("d'Union Lëtzebuerg",
+            // "d'Origine vun"). A word the LOD only has in lower case gets its remark from the
+            // spelling check.
+            // (within the same clause: no punctuation in between)
+            let clause_start = (index.saturating_sub(3)..index)
+                .rev()
+                .take_while(|&position| is_blank(analysis.gap_after(position)))
+                .last()
+                .unwrap_or(index);
+            let predicate = (clause_start..index).any(|position| {
+                matches!(
+                    analysis.lowercase(position).as_str(),
+                    "ass"
+                        | "sinn"
+                        | "si"
+                        | "bass"
+                        | "sidd"
+                        | "war"
+                        | "waren"
+                        | "wier"
+                        | "wieren"
+                        | "gëtt"
+                        | "ginn"
+                        | "gi"
+                        | "gouf"
+                        | "goufen"
+                )
+            });
+            if predicate && starts_upper(&next.text) && next.status != Status::Case {
+                let lower = lowercase_first(&next.text);
+                issues.push(Issue::new(
+                    index + 1,
+                    Severity::Warning,
+                    category::CAPITAL,
+                    "capital_unexpected",
+                    glossed(
+                        dictionary,
+                        &[("word", &next.text), ("lower", &lower)],
+                        Some(record),
+                    ),
+                    vec![lower],
+                ));
+            }
+            return;
+        }
+    }
     let determiner = dictionary.determiners.get(lowercase.as_str());
     // "zwee" and "zwou" agree in gender too: zwee is masculine or neuter, zwou feminine.
     let number_genders: Option<&'static str> = match lowercase.as_str() {
@@ -3779,6 +3895,56 @@ fn check_space_before_punctuation(
     }
 }
 
+/// ZLS 10.5.1: no space after the apostrophe of a word cut at its end ("d' Kanner" →
+/// "d'Kanner", "z' iessen" → "z'iessen"). Only d' before a capitalised word and z' before a
+/// verb, standing alone: "Bier'n" and a leading apostrophe ("hien 't") are other things, and a
+/// d' before a verb or a preposition is a word lost from the text ("geet d' duerch d'Gemeng").
+fn check_space_after_apostrophe(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
+    let chars = analysis.chars;
+    let word = &analysis.words[index];
+    let Some(next) = analysis.words.get(index + 1) else {
+        return;
+    };
+    let letter = chars[word.start];
+    let fits = match letter.to_ascii_lowercase() {
+        'd' => starts_upper(&next.text),
+        'z' => parts_of_speech(analysis.dictionary, next).contains(&"VRB"),
+        _ => false,
+    };
+    if !fits {
+        return;
+    }
+    // "d'" as one word, or "d" then the apostrophe
+    let apostrophe = word.start + 1;
+    let alone = word.end == apostrophe + 1 || word.end == apostrophe;
+    if !alone || apostrophe >= chars.len() || !is_apostrophe(chars[apostrophe]) {
+        return;
+    }
+    let before_ok = word.start == 0
+        || is_space(chars[word.start - 1])
+        || matches!(
+            chars[word.start - 1],
+            '(' | '"' | '\u{201e}' | '\u{201c}' | '\u{ab}'
+        );
+    let gap = &chars[apostrophe + 1..next.start];
+    if !before_ok || gap.is_empty() || !is_blank(gap) || !next.text.starts_with(is_letter) {
+        return;
+    }
+    let mark = chars[apostrophe].to_string();
+    let fixed = format!("{letter}{mark}{}", next.text);
+    issues.push(
+        Issue::new(
+            index,
+            Severity::Warning,
+            category::TYPOGRAPHY,
+            "space_after",
+            params(&[("mark", &mark)]),
+            vec![fixed],
+        )
+        .ending_at(analysis.utf16_offsets[next.end]),
+    );
+}
+
 fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut utf16_offsets: Vec<usize> = Vec::with_capacity(chars.len() + 1);
@@ -3819,6 +3985,7 @@ fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
         check_ze_infinitive(&analysis, index, &mut issues);
         check_repeated_word(&analysis, index, &mut issues);
         check_capital_start(&analysis, index, &mut issues);
+        check_space_after_apostrophe(&analysis, index, &mut issues);
     }
     let word_at: Map<usize, usize> = words
         .iter()

@@ -173,6 +173,7 @@ string means "none"):
 | spelling | `known_misspelling` | word | a misspelling the LOD lists |
 | spelling | `missing_accent` | word, accented, source | the same letters with more accents are a known word |
 | spelling | `accent_variant` | word, accented, source | the same letters with other accents are a known word |
+| spelling | `s_apart` | word, fixed | the connecting s glued to the conjunction: *obs de* → *ob s de* (ZLS 4.4.1) |
 | spelling | `unknown_word` | word, close?, close_source? | unknown; the fixes may be empty |
 | spelling | `unknown_capitalised` | word, close?, close_source? | unknown, capitalised mid-sentence, with close words |
 | compound | `compound` | word, first, first_fr/en/de/pt, second, second_fr/en/de/pt | looks like first + second (with their LOD translations) |
@@ -184,7 +185,7 @@ string means "none"):
 | capital | `capital_missing` | noun, gloss_fr/en/de/pt | a noun written in lower case |
 | capital | `capital_start` | fixed | a sentence starting in lower case |
 | n_rule | `n_keep` | next, before (`n` `d` `t` `z` `h` or `vowel`), full | the n must stay; before a number in digits, `next` is the number and `before` the first sound of its reading (*den 1. Abrëll*, ZLS 6.1.1) |
-| n_rule | `n_end` | full, mark (the punctuation mark, empty at the end of a sentence) | the n must stay at the end of a sentence or before a punctuation mark (ZLS 6.1.2.4) |
+| n_rule | `n_end` | full, mark (the punctuation mark, empty at the end of a sentence) | the n must stay at the end of a sentence (`err`) or before a punctuation mark (`warn`, ZLS 6.1.2.4) |
 | n_rule | `n_drop` | next, initial, sound (`j` for a Y said [j], else empty), fixed | the n must drop; before a number in digits, `initial` is the first letter of its reading (*de 5. Abrëll*: `f`) |
 | plural | `plural_determiner` | noun, lemma (when it differs), fixed, current | singular determiner before a plural |
 | plural | `number_plural` | number, plural | a number before a singular noun |
@@ -196,6 +197,7 @@ string means "none"):
 | contraction | `contraction` | phrase, contracted | *vun dem* → *vum* |
 | typography | `repeated_word` | word | the same word twice |
 | typography | `space_before` | mark | a space before `, . ; : ? !` |
+| typography | `space_after` | mark (the apostrophe) | a space after *d'* before a capitalised word or *z'* before a verb: *d' Kanner* → *d'Kanner* (ZLS 10.5.1); the fix covers both words |
 
 ## Layout
 
