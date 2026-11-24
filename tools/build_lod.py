@@ -98,6 +98,10 @@ for ev, el in ET.iterparse(D + "search/new_lod-search.xml"):
         ok[t].add(i)
         full = next((f for f in (t + "n", t + "nn") if f in valid and f != t), None)
         is_n = bool(full) and (r == "n-rule" or full == lemma or (pos == "VRB" and t != lemma))
+        # ZLS 2.2.5: a plural in -ien loses its n as -ië, so that it does not read as the
+        # singular: "Batterien" / "Batterië sammelen", "Kopien" / "Kopië maachen".
+        if not full and t.endswith("ië") and t[:-1] + "en" in valid:
+            full, is_n = t[:-1] + "en", True
         if is_n: nfull[t].add(full)
         elif not multi and pos != "INTERJ" and len(lemma) > 1: indep[t].add(i)
     for tx in el.iter("text"):

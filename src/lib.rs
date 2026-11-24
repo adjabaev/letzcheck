@@ -2022,6 +2022,23 @@ impl<'a> Analysis<'a> {
     /// (0 ech … 5 si) and the verb's lemma.
     fn present_form(&self, word: &Word, person: usize) -> Option<(String, StaticStr)> {
         let dictionary = self.dictionary;
+        let form = word.form.as_str();
+        // The verb whose present the form is, with or without its n ("hu" for "hunn"): "kënnt"
+        // is in the tables of both "kënnen" and "kommen".
+        let is_present = |forms: &[StaticStr; 8]| {
+            forms[2..8].iter().any(|cell| {
+                cell.split(" / ").any(|alternative| {
+                    let verb = alternative.split(' ').next().unwrap_or("");
+                    verb == form
+                        || [(verb, form), (form, verb)]
+                            .iter()
+                            .any(|&(longer, shorter)| {
+                                !shorter.is_empty()
+                                    && matches!(longer.strip_prefix(shorter), Some("n" | "nn"))
+                            })
+                })
+            })
+        };
         let (forms, lemma) = dictionary
             .entry_indices(word.record)
             .iter()
@@ -2029,17 +2046,11 @@ impl<'a> Analysis<'a> {
                 dictionary
                     .conjugations
                     .get(&(i as u32))
+                    .filter(|forms| is_present(forms))
                     .map(|forms| (forms, dictionary.entries[i].lemma))
             })?;
-        let form = word.form.as_str();
-        let is_present = forms[2..8].iter().any(|cell| {
-            cell.split(" / ").any(|alternative| {
-                let verb = alternative.split(' ').next().unwrap_or("");
-                verb == form || format!("{verb}n") == form || format!("{verb}nn") == form
-            })
-        });
         let wanted = first_form(forms[2 + person]).to_string();
-        (is_present && !wanted.is_empty()).then_some((wanted, lemma))
+        (!wanted.is_empty()).then_some((wanted, lemma))
     }
 }
 
@@ -2186,6 +2197,11 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
         || analysis.gap_after(index).first() == Some(&'.')
             && ABBREVIATIONS.contains(&lower.as_str())
     {
+        return;
+    }
+    // "vu que" (as "well"): the LOD writes it in its examples ("Vu que datt ech net vill
+    // verdéngen…") but has no entry for "que".
+    if lower == "que" && index > 0 && analysis.lowercase(index - 1) == "vu" {
         return;
     }
     // ZLS 4.4.1: before "de" / "du" / "d'" of the 2nd person, the connecting s stands apart: "ob
@@ -2926,7 +2942,13 @@ fn n_drop_issue(
     if dictionary.valid_record(without_n).is_none() || form == without_n {
         return None;
     }
-    let fixed = keep_case(&word.text, without_n);
+    // A noun written in lower case after a hyphen keeps it ("Teleesfilmer a -serien mat" →
+    // "-serië", ZLS 9.6.4); its capital, if missing elsewhere, has a remark of its own.
+    let fixed = if starts_upper(&word.text) {
+        keep_case(&word.text, without_n)
+    } else {
+        lowercase_first(without_n)
+    };
     Some(Issue::new(
         index,
         Severity::Warning,
@@ -3337,8 +3359,9 @@ fn ech_du_without_form(analysis: &Analysis, index: usize, full: &str) -> bool {
         })
 }
 
-/// A verb form proposed as a fix, with the n-rule applied to it: "Ech hutt gëschter" becomes
-/// "Ech hu gëschter" in one step, not "hunn" and then a second remark for the n.
+/// A form proposed as a fix, with the n-rule applied to it: "Ech hutt gëschter" becomes "Ech
+/// hu gëschter" in one step, not "hunn" and then a second remark for the n; "zwou Kopie
+/// gemaach" becomes "zwou Kopië gemaach".
 fn fit_n(analysis: &Analysis, verb_index: usize, wanted: &str) -> String {
     let dictionary = analysis.dictionary;
     if analysis.next_is_adjacent(verb_index) {
@@ -3507,6 +3530,15 @@ fn check_pronoun_verb(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>
     fixes.dedup();
     // the verb is wrong anyway: an n-rule remark on it would fix the wrong form
     drop_n_rule(issues, index + 1);
+    // and one on the pronoun follows the wrong verb when the right one starts otherwise: "Hien
+    // sinn" → "Hie" before "sinn", yet "Hien ass" ("Hien spillen" → "Hie spillt" stays)
+    if let Some(wanted) = fixes.first() {
+        let keeps = in_set(N_KEEP_INITIALS, &initial(wanted));
+        issues.retain(|issue| {
+            issue.word_index != index
+                || !matches!((issue.rule, keeps), ("n_drop", true) | ("n_keep", false))
+        });
+    }
     issues.push(Issue::new(
         index + 1,
         Severity::Error,
@@ -3651,7 +3683,8 @@ fn check_number_plural(
         category::PLURAL,
         "number_plural",
         params(&[("number", label), ("plural", plural)]),
-        vec![plural.to_string()],
+        // with the n-rule: "zwou Kopie gemaach" → "zwou Kopië gemaach" (ZLS 2.2.5)
+        vec![fit_n(analysis, noun_index, plural)],
     ));
 }
 
