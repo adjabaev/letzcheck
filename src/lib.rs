@@ -276,8 +276,16 @@ fn keeps_n_before(dictionary: &Dictionary, next: &Word, next_initial: &str) -> O
             return Some(first == b'v');
         }
     }
-    if next_initial == "y" {
+    // A letter on its own ("a, b an c") is said by its name, which the letter does not show.
+    // A vowel on its own is the pronoun "e" or the conjunction "a"; "s" is the clitic.
+    let lone_consonant = next.text.chars().count() == 1
+        && next_initial != "s"
+        && !in_set("aeiouäëéèêöüàâîôû", next_initial);
+    if next_initial == "y" || lone_consonant {
         return None;
+    }
+    if let Some(decision) = initialism_keeps_n(&next.text) {
+        return decision;
     }
     if !next_initial.is_empty() && in_set(N_KEEP_INITIALS, next_initial) {
         Some(true)
@@ -286,6 +294,81 @@ fn keeps_n_before(dictionary: &Dictionary, next: &Word, next_initial: &str) -> O
     } else {
         None
     }
+}
+
+/// The capital letters whose name starts with a sound that keeps the n while the letter itself
+/// does not: C (Zee), F (Eff), L (Ell), M (Emm), R (Err), S (Ess), X (Iks). ZLS 6.1.1 (p. 48):
+/// before an abbreviation said letter by letter, its first sound decides ("den LCTO-Programm",
+/// "en SNJ-Ausfluch"); the other letters' names start like the letters (A, Bee, Dee, Gee…).
+const LETTER_NAME_KEEPS_N: &str = "CFLMRSX";
+
+/// The n-rule before an abbreviation (ZLS 6.1.1): Some(decision) when the next word starts with
+/// one ("LCTO-Programm", "FC", "Mpox"), None when it reads as an ordinary word. The decision is
+/// None (silence) when the abbreviation may be said as a word ("SAMU", "Nato") and its first
+/// letter would then decide otherwise than its name.
+fn initialism_keeps_n(next: &str) -> Option<Option<bool>> {
+    let mut chars = next.chars();
+    let first = chars.next()?;
+    let second = chars.next()?;
+    if !first.is_ascii_uppercase() || !second.is_alphabetic() {
+        return None;
+    }
+    let capitals: String = next.chars().take_while(char::is_ascii_uppercase).collect();
+    let after = next[capitals.len()..].chars().next();
+    let is_vowel = |letter: char| {
+        letter
+            .to_lowercase()
+            .all(|lower| "aeiouyäëéèêöüàâîôû".contains(lower))
+    };
+    let spelt_out = if second.is_ascii_uppercase() {
+        // "LKW", "CFL-Zuch", "FC": capitals with no vowel cannot be said as a word, unless
+        // lower-case letters follow ("MHz", said "Megahertz").
+        if after.is_some_and(char::is_lowercase) {
+            false
+        } else {
+            !capitals.chars().any(is_vowel)
+        }
+    } else {
+        // "Mpox": a capital l m n r before a stop or a fricative, which no word starts with
+        // ("Sri", "Ljubljana", "Mnemonik" do).
+        if !"LMNR".contains(first) || !"bcdfgkpqstvxz".contains(second) {
+            return None;
+        }
+        true
+    };
+    let by_letter = in_set(N_KEEP_INITIALS, &first.to_lowercase().to_string());
+    if !LETTER_NAME_KEEPS_N.contains(first) {
+        // The name starts like the letter: the usual rule.
+        return Some(Some(by_letter));
+    }
+    Some(spelt_out.then_some(true))
+}
+
+/// Words whose n may stay before any consonant, so the rule says nothing on them (ZLS 6.1.2.2 and
+/// 6.4): nouns in -äin ("de Wäin gëtt gedronk", "Latäin léieren"), one-syllable nouns in -een
+/// ("duerch de Reen lafen", "e Steen geheien"), and the names of towns and villages ("zu
+/// Lëntgen brennt et"). The LOD gives a country a gender (Italien, N) and a town none; countries
+/// keep the rule ("an Italie fueren").
+fn has_optional_n(dictionary: &Dictionary, word: &Word) -> bool {
+    let form = word.form.to_lowercase();
+    let entries = dictionary.entry_indices(word.record);
+    // Every reading must allow it: "Stroossen" is a town and the plural of "Strooss".
+    !entries.is_empty()
+        && entries
+            .iter()
+            .map(|&i| &dictionary.entries[i])
+            .all(|entry| match entry.part_of_speech {
+                "SUBST" => {
+                    let one_syllable = form
+                        .chars()
+                        .filter(|letter| "aeiouäëéöüy".contains(*letter))
+                        .count()
+                        <= 2;
+                    form.ends_with("äin") || form.ends_with("een") && one_syllable
+                }
+                "NP" => entry.gender.is_empty() && !entry.lemma.contains(' '),
+                _ => false,
+            })
 }
 
 /// "den|de" style variants: the first keeps the n, the next ones drop it.
@@ -421,12 +504,17 @@ fn build_determiners() -> HashMap<String, Determiner> {
     ];
     for (masculine, feminine, neuter) in groups {
         let neuter_or_masculine = neuter.unwrap_or(masculine);
+        // "hiren", "eise", "dësen" are also the dative plural ("mat hire Kanner", "vun eise
+        // Clienten"): before a plural noun they are right, so no plural remark on them.
+        let also_dative_plural = masculine.starts_with(&format!("{feminine}en|"));
         for form in masculine.split('|') {
             let mut entry = match neuter {
                 Some(neuter) => determiner("M", &[('F', feminine), ('N', neuter)]),
                 None => determiner("MN", &[('F', feminine)]),
             };
-            entry.plural = Some(feminine.to_string());
+            if !also_dative_plural {
+                entry.plural = Some(feminine.to_string());
+            }
             put(&mut table, form, entry);
         }
         put(
@@ -1786,8 +1874,11 @@ const SUBJECT_PRONOUNS: [&str; 14] = [
     "ech", "du", "de", "hien", "hatt", "si", "se", "et", "mir", "mer", "dir", "der", "en", "s",
 ];
 const POSSESSIVES: [&str; 6] = ["säi", "säin", "seng", "hir", "hiren", "hire"];
-const ABBREVIATIONS: [&str; 14] = [
+/// Abbreviations written with a full stop, from ZLS 8.5.1 ("ca., d. h., Jh., wgl., z. B., allg.,
+/// Dr., evtl., Nr., Tel., asw., etc.") and in common use.
+const ABBREVIATIONS: [&str; 20] = [
     "asw", "bzw", "etc", "ca", "resp", "vgl", "nr", "dr", "hr", "fr", "st", "z", "u", "mme",
+    "allg", "evtl", "tel", "jh", "wgl", "s",
 ];
 
 // ---------- analysis ----------
@@ -2027,6 +2118,15 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     let mut add = |severity, category, rule, params, fixes| {
         issues.push(Issue::new(index, severity, category, rule, params, fixes))
     };
+    // A single letter ("No a, b an c kënnt d.", ZLS 8.4) and an abbreviation with its full stop
+    // ("z. B.", "Dr.", "Nr.", ZLS 8.5.1) are spelt as they are.
+    let lower = analysis.lowercase(index);
+    if text.chars().count() == 1 && !starts_upper(text)
+        || analysis.gap_after(index).first() == Some(&'.')
+            && ABBREVIATIONS.contains(&lower.as_str())
+    {
+        return;
+    }
     match word.status {
         Status::Ok | Status::Speller | Status::Number => {}
         Status::NumberToFix => {
@@ -2159,6 +2259,12 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
         Status::Case => {
             let form = word.form.as_str();
             if starts_upper(text) {
+                // An adjective or a verb used as a noun takes a capital ("beim Skaten", "dee
+                // Jonken", "zënter Kuerzem"), and so does an adjective in a name ("Kanadeschen
+                // Dollar"): the LOD lists the word in lower case only, yet the capital is right.
+                if is_nominalized(analysis, index) || starts_named_term(analysis, index) {
+                    return;
+                }
                 // A capital the LOD does not have: the lower-case word, then capitalised neighbours.
                 let mut fixes = vec![form.to_string()];
                 fixes.extend(
@@ -2176,6 +2282,15 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
                     fixes,
                 );
             } else {
+                // "Schoulgebaier, -kanner a -bussen": a hyphen stands for the repeated first part,
+                // and the rest is written in lower case (ZLS 9.6.4).
+                let start = word.start;
+                let after_lone_hyphen = start > 0
+                    && analysis.chars[start - 1] == '-'
+                    && (start == 1 || is_space(analysis.chars[start - 2]));
+                if after_lone_hyphen {
+                    return;
+                }
                 // A noun written in lower case.
                 add(
                     Severity::Warning,
@@ -2187,6 +2302,303 @@ fn check_spelling(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
             }
         }
     }
+}
+
+/// The capitalised `form` in lower case is an LOD adjective form or, when `infinitive` allows
+/// it, a verb's infinitive: "Franséischen" (franséischen), "Bongen" (bongen), "beim Plënneren"
+/// (plënneren). An infinitive is read so only after "dem" or a contraction with it: "säin
+/// Nerven" is a plural of "Nerv", not "nerven".
+fn reads_as_nominalized(dictionary: &Dictionary, form: &str, infinitive: bool) -> bool {
+    // "beim Strecke gesengt": the infinitive may have lost its n.
+    let lower = lowercase_first(form);
+    if lower == form {
+        return false;
+    }
+    let record = dictionary.valid_record(&lower);
+    dictionary.entry_indices(record).iter().any(|&i| {
+        let entry = &dictionary.entries[i];
+        match entry.part_of_speech {
+            "ADJ" => true,
+            "VRB" => {
+                infinitive
+                    && (entry.lemma == lower
+                        || entry.lemma.strip_suffix('n') == Some(lower.as_str()))
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Word `index` and the lower-case word right after it start an LOD lemma of several words:
+/// "Ordre du jour", "État des lieux", "Foie gras".
+fn starts_multiword_lemma(analysis: &Analysis, index: usize) -> bool {
+    if !analysis.next_is_adjacent(index) || starts_upper(&analysis.words[index + 1].text) {
+        return false;
+    }
+    let start = format!(
+        "{} {}",
+        analysis.words[index].text,
+        analysis.words[index + 1].text
+    );
+    analysis
+        .dictionary
+        .entries
+        .iter()
+        .any(|entry| entry.lemma.starts_with(&start))
+}
+
+/// The parts of speech the LOD gives a word.
+fn parts_of_speech<'d>(dictionary: &'d Dictionary, word: &Word) -> Vec<&'d str> {
+    dictionary
+        .entry_indices(word.record)
+        .into_iter()
+        .map(|i| dictionary.entries[i].part_of_speech)
+        .collect()
+}
+
+/// A form that can be used as a noun: an adjective or number, or of a verb only the infinitive
+/// ("beim Skaten") and the past participle, inflected or not ("déi Blesséiert", "alle
+/// Bedeelegten"). A conjugated form ("wann ee Muss") never is.
+fn can_be_noun(dictionary: &Dictionary, word: &Word) -> bool {
+    let form = word.form.as_str();
+    dictionary.entry_indices(word.record).into_iter().any(|i| {
+        let entry = &dictionary.entries[i];
+        match entry.part_of_speech {
+            "ADJ" | "NB" => true,
+            "VRB" => {
+                let infinitive = entry.lemma.to_lowercase();
+                // The infinitive, also without its n: "D'Fëmme setzt", "beim Verdeele vun".
+                form == infinitive
+                    || infinitive.strip_suffix('n') == Some(form)
+                    || dictionary
+                        .conjugations
+                        .get(&(i as u32))
+                        .map(|forms| first_form(forms[1]))
+                        .is_some_and(|participle| {
+                            !participle.is_empty() && form.starts_with(participle)
+                        })
+            }
+            _ => false,
+        }
+    })
+}
+
+/// The uninflected form a word may be used as a noun in.
+enum Bare {
+    /// The adjective's lemma itself: "séier", "gutt".
+    Adjective,
+    /// A past participle with no ending: "gericht", "blesséiert".
+    Participle,
+}
+
+/// Whether every reading of the word that could make a noun is an uninflected adjective or a
+/// bare past participle (None when one reading is inflected, an infinitive or a number).
+fn bare_reading(dictionary: &Dictionary, word: &Word) -> Option<Bare> {
+    let form = word.form.as_str();
+    let mut found = None;
+    for i in dictionary.entry_indices(word.record) {
+        let entry = &dictionary.entries[i];
+        match entry.part_of_speech {
+            "ADJ" if entry.lemma.to_lowercase() == form => found = found.or(Some(Bare::Adjective)),
+            "VRB" if form != entry.lemma.to_lowercase() => {
+                let participle = dictionary
+                    .conjugations
+                    .get(&(i as u32))
+                    .map(|forms| first_form(forms[1]))
+                    .unwrap_or("");
+                if participle != form {
+                    return None;
+                }
+                found = found.or(Some(Bare::Participle));
+            }
+            "ADJ" | "VRB" | "NB" => return None,
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Word `index` is capitalised mid-sentence and reads as a noun: an article, a determiner, a
+/// number or a contracted preposition ("beim", "nom") comes right before it (or before one
+/// adjective in between: "vum laange Sëtzen"), and no noun follows that it could qualify. A bare
+/// preposition counts only before a dative adjective ("zënter Kuerzem", "vu Klengem un"). The
+/// capital is then the one ZLS 8.1.2 and 8.1.3 ask of an infinitive or an adjective used as a
+/// noun ("Beim Plënneren", "zënter Kuerzem"), and "am beschten" keeps its lower case.
+fn is_nominalized(analysis: &Analysis, index: usize) -> bool {
+    if index == 0 || analysis.starts[index].loose {
+        return false;
+    }
+    let dictionary = analysis.dictionary;
+    if !can_be_noun(dictionary, &analysis.words[index]) {
+        return false;
+    }
+    let dative_adjective = analysis.words[index].form.ends_with("em");
+    // A noun right after, or after one more adjective: the word qualifies it, so it is no noun
+    // itself ("dat Neit Theaterstéck", "der Neier staatlecher Hëllef"). A capitalised word the
+    // LOD does not list is taken for a noun.
+    let is_noun_at = |position: usize| {
+        let word = &analysis.words[position];
+        let parts = parts_of_speech(dictionary, word);
+        starts_upper(&word.text)
+            && (parts.is_empty() || parts.iter().any(|part| matches!(*part, "SUBST" | "NP")))
+    };
+    if analysis.next_is_adjacent(index) {
+        if is_noun_at(index + 1) {
+            return false;
+        }
+        let next = &analysis.words[index + 1];
+        if !starts_upper(&next.text)
+            && analysis.only_part_of_speech(next, "ADJ")
+            && analysis.next_is_adjacent(index + 1)
+            && is_noun_at(index + 2)
+        {
+            return false;
+        }
+    }
+    let bare = bare_reading(dictionary, &analysis.words[index]);
+    let opens_noun_phrase = |position: usize| {
+        let word = &analysis.words[position];
+        let lower = analysis.lowercase(position);
+        // A quantity before a plural noun made of an adjective: "vill Jonker", "e puer Gudder".
+        // Not "ze vill Espacéieren", "ze vill Schlësseg": an adverb there, before a verb or a
+        // bare adjective.
+        let quantity = matches!(
+            lower.as_str(),
+            "vill" | "ville" | "villen" | "puer" | "wéineg" | "wéinege" | "wéinegen"
+        ) && bare.is_none()
+            && parts_of_speech(dictionary, &analysis.words[index]).contains(&"ADJ")
+            && (position == 0 || analysis.lowercase(position - 1) != "ze");
+        if dictionary.determiners.contains_key(&lower) || word.clitic && lower == "d'" || quantity {
+            return true;
+        }
+        let parts = parts_of_speech(dictionary, word);
+        // Contractions of a preposition and the article ("nom", "virum", "iwwerem") have an LOD
+        // entry with no part of speech and end in the m of "dem". "zënter" is also a
+        // conjunction, yet "zënter Kuerzem" is its preposition.
+        parts
+            .iter()
+            .any(|part| matches!(*part, "ART" | "NB") || part.is_empty() && lower.ends_with('m'))
+            || dative_adjective && parts.contains(&"PREP")
+    };
+    let adjacent = |position: usize| is_blank(analysis.gap_after(position));
+    let mut before = index - 1;
+    if !adjacent(before) && !analysis.words[before].clitic {
+        return false;
+    }
+    let previous = analysis.lowercase(before);
+    // "am beschten", "am léifsten": the superlative after "am" stays in lower case.
+    let form = analysis.words[index].form.as_str();
+    if previous == "am" && is_superlative_ending(form) {
+        return false;
+    }
+    // A noun made of an adjective takes its endings after a masculine or a dative article ("de
+    // Jonken", "dem Kranken"); only a neuter one stays bare ("dat Gutt", "d'Gréng"). A bare
+    // participle is a noun only as a plural ("déi Blesséiert"). So "de Séier" is a typo of
+    // "Stéier", and "d'Gericht" one of "Geriicht".
+    // After "ee", "een", "keen" a bare adjective is the predicate of the pronoun: "muss ee
+    // Flexibel sinn" is "flexibel".
+    match bare {
+        Some(Bare::Adjective)
+            if matches!(
+                previous.as_str(),
+                "de" | "den"
+                    | "dem"
+                    | "deem"
+                    | "deen"
+                    | "dee"
+                    | "der"
+                    | "engem"
+                    | "enger"
+                    | "ee"
+                    | "een"
+                    | "keen"
+                    | "en"
+            ) =>
+        {
+            return false;
+        }
+        Some(Bare::Participle) if previous != "déi" => return false,
+        _ => {}
+    }
+    // "hues de Gesinn", "wann ee Maachen": after a verb or a conjunction, these words are
+    // pronouns, and the verb after them is a verb.
+    let verb_form = !parts_of_speech(dictionary, &analysis.words[index]).contains(&"ADJ");
+    if verb_form
+        && before > 0
+        && matches!(
+            previous.as_str(),
+            "de" | "der" | "en" | "e" | "ee" | "een" | "se" | "si" | "déi" | "dat" | "dee"
+        )
+    {
+        let parts = parts_of_speech(dictionary, &analysis.words[before - 1]);
+        if parts.iter().any(|part| matches!(*part, "VRB" | "CONJ"))
+            && !parts.iter().any(|part| matches!(*part, "ART" | "PREP"))
+        {
+            return false;
+        }
+    }
+    if opens_noun_phrase(before) {
+        return true;
+    }
+    // One lower-case adjective in between: "vum laange Sëtzen", "dat laangt Waarden".
+    let between = &analysis.words[before];
+    if before == 0
+        || starts_upper(&between.text)
+        || !analysis.only_part_of_speech(between, "ADJ")
+        || analysis.starts[before].loose
+    {
+        return false;
+    }
+    before -= 1;
+    (adjacent(before) || analysis.words[before].clitic) && opens_noun_phrase(before)
+}
+
+/// The ending of a superlative after "am": "am léifsten", "am beschten", "am léifste".
+fn is_superlative_ending(form: &str) -> bool {
+    ["sten", "ste", "schten", "schte"]
+        .iter()
+        .any(|ending| form.ends_with(ending))
+}
+
+/// Word `index` is a capitalised adjective that starts a name the LOD lists in several words
+/// ("Kanadeschen Dollar", "Dominikanesch Republik", "Seelen Äerden"), inflected or not, and the
+/// next word is that name's second word.
+fn starts_named_term(analysis: &Analysis, index: usize) -> bool {
+    if !analysis.next_is_adjacent(index) {
+        return false;
+    }
+    let dictionary = analysis.dictionary;
+    let word = &analysis.words[index];
+    let next = analysis.lowercase(index + 1);
+    let stems: Vec<String> = dictionary
+        .entry_indices(word.record)
+        .into_iter()
+        .filter(|&i| matches!(dictionary.entries[i].part_of_speech, "ADJ" | "NB"))
+        .map(|i| dictionary.entries[i].lemma.to_lowercase())
+        .collect();
+    if stems.is_empty() {
+        return false;
+    }
+    dictionary.entries.iter().any(|entry| {
+        let mut parts = entry.lemma.split(' ');
+        let (Some(first), Some(second)) = (parts.next(), parts.next()) else {
+            return false;
+        };
+        if !starts_upper(first) {
+            return false;
+        }
+        let first = first.to_lowercase();
+        let second = second.to_lowercase();
+        // The second word inflects too ("Pond", "Ponden"): compare all but its last two letters,
+        // and allow no more than two letters of ending, so that a compound ("Neit Theaterstéck"
+        // against "Neien Theater") is no match.
+        let length = second.chars().count();
+        let keep = length.saturating_sub(2).max(3);
+        let second_stem: String = second.chars().take(keep).collect();
+        stems.iter().any(|stem| first.starts_with(stem.as_str()))
+            && next.starts_with(&second_stem)
+            && next.chars().count() <= length + 2
+    })
 }
 
 /// The n-rule (Eifeler Regel): a final n stays before a vowel and n d t z h, and at the end of a
@@ -2282,6 +2694,7 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     };
     if keeps_n_before(dictionary, next, &next_initial) != Some(false)
         || is_s_function_word(&next.normalized.to_lowercase())
+        || has_optional_n(dictionary, word)
     {
         return;
     }
@@ -2316,6 +2729,11 @@ fn check_n_rule(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
     }
 }
 
+/// Nouns that keep the old masculine article "der" in set phrases, as the LOD examples write
+/// them: "der Däiwel", "der Doud", "géint der Owend", "géint der Mëtteg", "géint der Moien",
+/// "wat der Jomer".
+const OLD_DER_NOUNS: [&str; 6] = ["Däiwel", "Doud", "Owend", "Mëtteg", "Moien", "Jomer"];
+
 /// "ee" and "een" are also the pronoun "one" ("datt ee Musek…", "Fir dat brauch een
 /// Erfarung"): only read them as an article after a preposition, or after a verb that has its
 /// own subject pronoun just before it.
@@ -2323,6 +2741,12 @@ fn is_een_pronoun(analysis: &Analysis, index: usize) -> bool {
     if !matches!(analysis.lowercase(index).as_str(), "ee" | "een") {
         return false;
     }
+    pronoun_context(analysis, index)
+}
+
+/// Word `index` stands where a subject pronoun would: at the start, after a conjunction, or
+/// after a verb with no subject pronoun of its own before it.
+fn pronoun_context(analysis: &Analysis, index: usize) -> bool {
     if index == 0 {
         return true;
     }
@@ -2332,8 +2756,14 @@ fn is_een_pronoun(analysis: &Analysis, index: usize) -> bool {
             analysis.lowercase(index - 2).as_str(),
             "ech" | "du" | "hien" | "hatt" | "si" | "mir" | "dir" | "mer" | "der" | "de"
         );
-    let after_conjunction = matches!(
-        previous.normalized.to_lowercase().as_str(),
+    let after_conjunction = is_conjunction(&previous.normalized.to_lowercase());
+    after_conjunction || (analysis.only_part_of_speech(previous, "VRB") && !subject_before)
+}
+
+/// A conjunction after which a subject pronoun may come: "well e laang Zäit krank war".
+fn is_conjunction(word: &str) -> bool {
+    matches!(
+        word,
         "datt"
             | "dass"
             | "wann"
@@ -2346,8 +2776,7 @@ fn is_een_pronoun(analysis: &Analysis, index: usize) -> bool {
             | "bis"
             | "soubal"
             | "obwuel"
-    );
-    after_conjunction || (analysis.only_part_of_speech(previous, "VRB") && !subject_before)
+    )
 }
 
 /// Determiner (or "zwee" / "zwou") and the gender or number of the noun after it, with at most
@@ -2388,6 +2817,10 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
         return;
     }
     let next = &words[index + 1];
+    // "am léifsten", "am beschten": a superlative adverb, not an article and its adjective.
+    if lowercase == "am" && is_superlative_ending(&next.form) {
+        return;
+    }
     let next_initial = initial(&next.normalized);
     let variant_keeps_n =
         next_initial.is_empty() || keeps_n_before(dictionary, next, &next_initial) == Some(true);
@@ -2449,6 +2882,17 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
             !is_n_form_of(entry.lemma)
         });
     let span = analysis.slice(next.start, noun.end);
+    // "Beim Plënneren", "am Franséischen", "kee Bongen": the plural of a noun that is also an
+    // infinitive or an adjective in lower case reads as that word used as a noun, singular
+    // (ZLS 8.1.2, 8.1.3). "Um Ordre du jour": a foreign name in several words.
+    // "am Garer Quartier": a place adjective in -er before a name's noun, not a plural.
+    let place_adjective = noun_form.ends_with("er")
+        && analysis.next_is_adjacent(noun_index)
+        && starts_upper(&words[noun_index + 1].text);
+    let is_plural = is_plural
+        && !place_adjective
+        && !reads_as_nominalized(dictionary, noun_form, lowercase.ends_with('m'))
+        && !starts_multiword_lemma(analysis, noun_index);
 
     // A plural noun after a singular determiner that has a plural form.
     if let (Some(plural), true, Some(&first)) = (
@@ -2477,15 +2921,37 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
         return;
     }
 
+    // d', de, den, déi and the feminine forms of the possessives are also plural ("d'Leit",
+    // "aus den Drëssegerjoren", "keng Alimenter").
+    let determiner_can_be_plural = matches!(lowercase.as_str(), "d'" | "de" | "den" | "déi")
+        || dictionary
+            .determiners
+            .values()
+            .any(|other| other.plural.as_deref() == Some(lowercase.as_str()));
+
     // The genders of the noun, when every reading of it agrees.
     let mut genders = String::new();
     let mut sure = !entries.is_empty();
     for &i in &entries {
         let entry = &dictionary.entries[i];
         let is_lemma = entry.lemma == noun_form;
-        let is_plural_form =
-            !entry.plural.is_empty() && entry.plural.split(", ").any(|p| p == noun_form);
-        if entry.part_of_speech != "SUBST" || entry.gender.is_empty() {
+        // The plural, also without its n: "vun den Immobilie kuckt" ("den" before a singular
+        // feminine noun is no article, so it is the dative plural).
+        let n_less_plural = !is_lemma || lowercase == "den";
+        let is_plural_form = !entry.plural.is_empty()
+            && entry
+                .plural
+                .split(", ")
+                .any(|p| p == noun_form || n_less_plural && p.strip_suffix('n') == Some(noun_form));
+        // A noun the LOD lists with a gender but no plural, that looks like one: it is used
+        // only in the plural ("d'Zënsen", "d'Otemweeër", "aus den Drëssegerjoren"), so a
+        // determiner that is also plural fits it ("dem Chamber" stays checked).
+        let plural_only = determiner_can_be_plural
+            && entry.plural.is_empty()
+            && ["en", "er", "ër"]
+                .iter()
+                .any(|ending| entry.lemma.ends_with(ending));
+        if entry.part_of_speech != "SUBST" || entry.gender.is_empty() || plural_only {
             sure = false;
             continue;
         }
@@ -2513,6 +2979,26 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
     let Some(gender) = genders.chars().next() else {
         return;
     };
+    // "der" is also the pronoun "dir" after a subject pronoun ("ginn ech der Recht", "muss de
+    // der Gehéier verschafen") or with the capital of politeness ("Wëllt Der Räis?"), and an
+    // old masculine article in set phrases ("der Däiwel", "géint der Owend").
+    if lowercase == "der" {
+        let after_subject =
+            index > 0 && SUBJECT_PRONOUNS.contains(&analysis.lowercase(index - 1).as_str());
+        let polite = text == "Der" && !analysis.starts[index].loose;
+        if after_subject || polite || OLD_DER_NOUNS.contains(&noun_form) {
+            return;
+        }
+    }
+    // "well e laang Zäit krank war", "huet en déif Loft geholl": "e" and "en" are also the
+    // pronoun "he"; with an adjective between, the noun may not be theirs.
+    if matches!(lowercase.as_str(), "e" | "en")
+        && noun_index == index + 2
+        && index > 0
+        && is_conjunction(&analysis.lowercase(index - 1))
+    {
+        return;
+    }
     let gender_code = match gender {
         'M' => "M",
         'F' => "F",

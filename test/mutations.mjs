@@ -39,8 +39,19 @@ export function cases(lodFile, corpusFile) {
   // Present forms per person, every LOD table: form → persons it is; table rows to swap from.
   const personsOf = new Map(), participles = new Set(), tables = [], soundsOff = new Set()
   const words = cell => cell.split(' / ').map(alt => alt.split(' ')[0]).filter(Boolean)
+  // Words whose n ZLS leaves free before a consonant (6.1.2.2, 6.4): nouns in -äin, one-syllable
+  // nouns in -een, towns (an LOD name with no gender). Adding their n is no mistake.
+  const entries = [], optionalN = new Set()
+  const optional = (form, e) => e[2] === 'SUBST'
+    ? form.endsWith('äin') || form.endsWith('een') && [...form].filter(c => 'aeiouäëéöüy'.includes(c)).length <= 2
+    : e[2] === 'NP' && !e[3] && !e[1].includes(' ')
   for (const line of fs.readFileSync(lodFile, 'utf8').split('\n')) {
     const f = line.split('\t')
+    if (f.length === 11) entries.push(f)
+    if (f.length === 4 && f[1] && !f[1].startsWith('!')) {
+      const es = f[1].split(',').map(i => entries[+i])
+      if (es.every(e => e && optional(f[0].toLowerCase(), e))) optionalN.add(f[0])
+    }
     // Words the LOD says sound otherwise than they are spelt (Job, Gin, Yoga): not certain cases.
     if (f.length === 11 && f[8]) { soundsOff.add(f[1].toLowerCase()); continue }
     if (f.length === 9 && /^\d+$/.test(f[0])) {
@@ -91,7 +102,8 @@ export function cases(lodFile, corpusFile) {
     let family, replacement
     if (fullToShort.has(lower) && KEEP.has(initial) && !droppedBefore.has(next)) {
       family = 'n_drop_wrong'; replacement = fullToShort.get(lower)
-    } else if (shortToFull.has(lower) && DROP.has(initial) && !keptBefore.has(next)) {
+    } else if (shortToFull.has(lower) && DROP.has(initial) && !keptBefore.has(next)
+        && !optionalN.has(shortToFull.get(lower))) {
       family = 'n_add_wrong'; replacement = shortToFull.get(lower)
     } else continue
     replacement = keepCase(p.a, replacement)
