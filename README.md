@@ -192,6 +192,7 @@ string means "none"):
 | plural | `number_plural` | number, plural | a number before a singular noun |
 | plural | `number_gender_plural` | noun, gender, plural, fixed, current | zwee / zwou of the wrong gender before a singular noun: one fix for both words ("zwee Kaz" → "zwou Kazen") |
 | gender | `gender_determiner` | noun, gender (`M` `F` `N`), fixed, current | determiner of the wrong gender |
+| gender | `adjective_ending` | adjective, noun, gender (`M` `N`), dative (`1` or empty), fixed, current | adjective ending after a determiner: masculine -en (with the n-rule), neuter -t, -en in the dative |
 | verb | `verb_form` | pronoun, verb, lemma, expected | wrong person, with the right form |
 | verb | `verb_mismatch` | pronoun, verb | wrong person, no form to offer |
 | verb | `ze_infinitive` | verb | *ze* + something else than the infinitive |

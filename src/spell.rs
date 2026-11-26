@@ -250,6 +250,37 @@ impl Speller {
             .is_some_and(|homonyms| homonyms.iter().any(|&flags| test(flags)))
     }
 
+    /// The words that the suffixes of `root` whose flag starts with `class` make from it, one
+    /// suffix deep, in the order of the root's flags: with `b'a'`, the endings spellchecker.lu
+    /// gives an adjective ("rout" → "roude", "rouden", "roudem", "rouder").
+    pub(crate) fn suffixed(&self, root: &str, class: u8) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let Some(homonyms) = self.words.get(root) else {
+            return out;
+        };
+        for flags in homonyms {
+            for two in flags.as_bytes().chunks_exact(2) {
+                if two[0] != class {
+                    continue;
+                }
+                let flag = flag_of(two);
+                for affix in self.suffixes.values().flatten() {
+                    if affix.flag != flag || !affix.fits_end(root) {
+                        continue;
+                    }
+                    let Some(stem) = root.strip_suffix(affix.strip) else {
+                        continue;
+                    };
+                    let word = format!("{stem}{}", affix.append);
+                    if !out.contains(&word) {
+                        out.push(word);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// The word is spelt right according to the dictionary (case-sensitive, as Hunspell's own
     /// lookup; the caller tries the case variants).
     pub(crate) fn check(&self, word: &str) -> bool {
