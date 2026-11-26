@@ -28,6 +28,13 @@
 //                 "zwee Hënn" → "zwee Hond". Only nouns whose singular the LOD never writes after a
 //                 number ("dräi Mol", "zwee Liter": not cases).
 //
+//   adjective_ending_wrong  the one adjective between a determiner and a singular noun of one
+//                 gender loses its ending: "en héije Bam" → "en héich Bam", "e grousst Haus" → "e
+//                 grouss Haus", "engem klengen Duerf" → "engem kleng Duerf". Only a masculine noun
+//                 (-en whatever the case), or a neuter one after e, en, dat, kee(n), mäi(n), däi(n),
+//                 säi(n) (-t) or after a dative determiner (-en); only an adjective form of one
+//                 lemma that is an adjective in every entry, and only when the LOD never writes
+//                 that determiner, lemma and noun together ("e sëlwer Couvert" is in the LOD).
 //   accent_wrong  one accent of a word of the sentence is dropped ("Schnéi" → "Schnei"), only when
 //                 the bare form is no LOD form in any case and the spellchecker.lu dictionary (run
 //                 by hunspell) rejects it too ("Bänk" → "Bank" is a word: not a case). One per
@@ -219,6 +226,50 @@ export function cases(lodFile, corpusFile) {
       out.push({ family: 'gender_wrong', wrong, right, start: at, end: at + shown.length + glue.length + noun.length })
       break
     }
+  }
+  // Adjective endings. Forms of one adjective lemma (every entry of the form and of the lemma an
+  // adjective), and which determiners ask which ending.
+  const adjLemma = new Map(), lemmaPos = new Map(), entryLine = []
+  for (const line of fs.readFileSync(lodFile, 'utf8').split('\n')) {
+    const f = line.split('\t')
+    if (f.length === 11) { entryLine.push(f); continue }
+  }
+  for (const e of entryLine) { if (!lemmaPos.has(e[1])) lemmaPos.set(e[1], new Set()); lemmaPos.get(e[1]).add(e[2]) }
+  for (const line of fs.readFileSync(lodFile, 'utf8').split('\n')) {
+    const f = line.split('\t')
+    if (f.length !== 4 || !/^\d+(,\d+)*$/.test(f[1])) continue
+    const es = f[1].split(',').map(i => entryLine[+i]).filter(Boolean)
+    if (!es.length || !es.every(e => e[2] === 'ADJ')) continue
+    const lemmas = new Set(es.map(e => e[1]))
+    if (lemmas.size !== 1) continue
+    const lemma = [...lemmas][0]
+    if (lemma === f[0] || ![...lemmaPos.get(lemma)].every(p => p === 'ADJ')) continue
+    // Not a superlative or a comparative ("wichtegst", "méi grousser"): the ending is then another one.
+    if (/en$/.test(lemma) || !f[0].startsWith(lemma.slice(0, -2)) || /st(en?)?$/.test(f[0]) && f[0] !== lemma + 't' && !/st$/.test(lemma) || /er(en?|t)?$/.test(f[0]) && !/er$/.test(lemma)) continue
+    adjLemma.set(f[0], lemma)
+  }
+  const NEUTER_T = new Set(['e', 'en', 'dat', 'dëst', 'kee', 'keen', 'mäi', 'mäin', 'däi', 'däin', 'säi', 'säin'])
+  const MASC = new Set(['e', 'en', 'de', 'den', 'dee', 'deen', 'dëse', 'dësen', 'kee', 'keen', 'mäi', 'mäin', 'däi', 'däin', 'säi', 'säin', 'hire', 'hiren', 'eise', 'eisen', 'äre', 'ären'])
+  const DATIVE = new Set(['dem', 'deem', 'engem', 'kengem', 'mengem', 'dengem', 'sengem', 'hirem', 'eisem', 'ärem', 'dësem'])
+  const PLURAL_TOO = new Set(['den', 'hire', 'hiren', 'eise', 'eisen', 'äre', 'ären'])
+  const adjRe = /(?<![\p{L}'’´-])(\p{L}+) (\p{Ll}+) (\p{Lu}\p{L}*)(?![\p{L}'’´-])/gu
+  const triples = new Set()
+  for (const s of sentences) for (const m of s.matchAll(adjRe)) triples.add(m[1].toLowerCase() + ' ' + m[2] + ' ' + m[3])
+  for (const right of sentences) for (const m of right.matchAll(adjRe)) {
+    const det = m[1].toLowerCase(), adj = m[2], noun = m[3]
+    const lemma = adjLemma.get(adj)
+    if (!lemma) continue
+    const g = genderOf.get(noun)
+    if (g !== 'M' && g !== 'N') continue
+    // A noun that is also a plural is only certain after a determiner with no plural reading.
+    if ((pluralForms.has(noun) || selfPlural.has(noun)) && PLURAL_TOO.has(det)) continue
+    if (/\bs\s*$/.test(right.slice(0, m.index))) continue          // "wann s de": "de" is "du"
+    let ok
+    if (g === 'M') ok = (MASC.has(det) || DATIVE.has(det)) && /en?$/.test(adj)
+    else ok = NEUTER_T.has(det) ? /t$/.test(adj) : DATIVE.has(det) && /en?$/.test(adj)
+    if (!ok || triples.has(det + ' ' + lemma + ' ' + noun)) continue
+    const start = m.index + m[1].length + 1
+    out.push({ family: 'adjective_ending_wrong', wrong: right.slice(0, start) + lemma + right.slice(start + adj.length), right, start, end: start + lemma.length })
   }
   // Accents: the bare form must be no word at all.
   const known = new Set()

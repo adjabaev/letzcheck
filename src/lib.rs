@@ -3020,6 +3020,326 @@ fn check_determiner(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) 
     ));
 }
 
+/// Determiners after which an attributive adjective's ending is certain (LOD usage): masculine
+/// singular -en whatever the case ("e groussen Hond", "dee klengen Hond", "engem klengen Hond"),
+/// neuter -t in the nominative and accusative ("e grousst Haus", "dat klengt Kand", "kee frëscht
+/// Brout") and -en in the dative ("engem klengen Duerf"). Each determiner: whether it can stand
+/// before a masculine noun, and the ending it asks of the neuter (none: not before a neuter).
+/// "em" is left out: it is also the pronoun ("ech ginn em frëscht Brout").
+fn adjective_determiner(determiner: &str) -> Option<(bool, Option<AdjectiveEnding>)> {
+    use AdjectiveEnding::{En, T};
+    Some(match determiner {
+        "e" | "en" | "kee" | "keen" | "mäi" | "mäin" | "däi" | "däin" | "säi" | "säin" => {
+            (true, Some(T))
+        }
+        "de" | "den" | "dee" | "deen" | "dëse" | "dësen" | "hire" | "hiren" | "eise" | "eisen"
+        | "äre" | "ären" => (true, None),
+        "dat" | "dëst" => (false, Some(T)),
+        "dem" | "deem" | "engem" | "kengem" | "mengem" | "dengem" | "sengem" | "hirem" | "eisem"
+        | "ärem" | "dësem" => (true, Some(En)),
+        _ => return None,
+    })
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum AdjectiveEnding {
+    En,
+    T,
+}
+
+/// The attributive forms of an adjective the LOD lists for that entry: with -en ("groussen",
+/// "rouden", "déiwen", "héijen") and with -t ("grousst", "neit"). None when the LOD has no such
+/// form: an indeclinable adjective ("online"), or a neuter that is the lemma itself ("rout",
+/// "gutt", "blond").
+fn adjective_forms(dictionary: &Dictionary, entry: usize) -> (Option<String>, Option<String>) {
+    let lemma = dictionary.entries[entry].lemma;
+    let of_entry = |form: &str| {
+        dictionary
+            .entry_indices(dictionary.valid_record(form))
+            .contains(&entry)
+    };
+    let swap = |end: &str, with: &str| {
+        lemma
+            .strip_suffix(end)
+            .map(|stem| format!("{stem}{with}"))
+    };
+    // An adjective of a material in -en is its own -en form: "e léngen Hiem".
+    let material = lemma.ends_with("en").then(|| lemma.to_string());
+    // The spellchecker.lu adjective endings of the lemma: its -en and its -t form.
+    let endings = dictionary.speller.suffixed(lemma, b'a');
+    if !endings.is_empty() {
+        // A form the LOD lists for the entry first ("formidabelen", not "formidaablen"), and the
+        // -enen of a participle ("ausgeglachenen") before its -en.
+        let pick = |end: &str| {
+            let fits = |form: &&String| form.ends_with(end) && form.as_str() != lemma;
+            let listed = || endings.iter().filter(fits).filter(|form| of_entry(form));
+            listed()
+                .find(|form| end == "en" && form.ends_with("enen"))
+                .or_else(|| listed().next())
+                .or_else(|| endings.iter().find(fits))
+                .cloned()
+        };
+        return match material {
+            // And it takes no -t: "e léngen Hiem".
+            Some(material) => (Some(material), None),
+            None => (pick("en"), pick("t")),
+        };
+    }
+    // Without that dictionary: the LOD forms of the entry, the special stems first.
+    if material.is_some() {
+        return (material, None);
+    }
+    let en = Some([
+        swap("ef", "wen"),
+        swap("f", "wen"),
+        swap("tt", "dden"),
+        swap("t", "den"),
+        swap("ch", "jen"),
+        swap("dd", "tten"),
+        swap("nd", "nen"),
+        Some(format!("{lemma}en")),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|form| form != lemma && of_entry(form))).flatten();
+    let t = [
+        Some(format!("{lemma}t")),
+        swap("ur", "uert"),
+        swap("är", "äert"),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|form| !lemma.ends_with('t') && of_entry(form));
+    (en, t)
+}
+
+/// How an adjective of the chain is written: its entry, the form it should take, and whether it
+/// has no ending at all.
+struct AdjectiveFix {
+    index: usize,
+    wanted: String,
+    bare: bool,
+}
+
+/// Word `index` is an adjective written with the wrong ending, or none, for the noun after it,
+/// when a determiner opens the phrase: "en italieenesch Restaurant" → "en italieenesche
+/// Restaurant" (Restaurant is masculine), "e klengen Haus" → "e klengt Haus". Only the
+/// adjective right before the noun is sure: an earlier one may be an adverb ("e chronesch kranke
+/// Patient", "e ganz neien Auto"). An earlier one in -esch with no ending, before a last one with
+/// no ending either, gets a remark worth a look ("en italieenesch gastronomesch Restaurant").
+fn check_adjective_ending(analysis: &Analysis, index: usize, issues: &mut Vec<Issue>) {
+    let dictionary = analysis.dictionary;
+    let words = analysis.words;
+    let determiner = analysis.lowercase(index);
+    let Some((masculine, neuter)) = adjective_determiner(&determiner) else {
+        return;
+    };
+    if words[index].clitic || !analysis.next_is_adjacent(index) {
+        return;
+    }
+    // "wann s de gutt Appetit hues": "de" is "du"
+    if determiner == "de" && index > 0 && words[index - 1].normalized.ends_with('s') {
+        return;
+    }
+    // The adjectives, lower case and known, then a capitalised noun.
+    let mut chain: Vec<usize> = Vec::new();
+    let mut at = index + 1;
+    loop {
+        let word = &words[at];
+        if starts_upper(&word.text) {
+            break;
+        }
+        let entries = dictionary.entry_indices(word.record);
+        if word.status != Status::Ok
+            || word.clitic
+            || !entries
+                .iter()
+                .any(|&i| dictionary.entries[i].part_of_speech == "ADJ")
+            || !entries
+                .iter()
+                .all(|&i| matches!(dictionary.entries[i].part_of_speech, "ADJ" | "ADV" | "VRB" | "VRBPART"))
+            || chain.len() == 3
+            || !analysis.next_is_adjacent(at)
+        {
+            return;
+        }
+        chain.push(at);
+        at += 1;
+    }
+    let noun_index = at;
+    let noun = &words[noun_index];
+    if chain.is_empty() || noun.status != Status::Ok || noun.clitic {
+        return;
+    }
+    // "e flott Restaurant-Owend", "e gutt Stéck-": the phrase goes on
+    if analysis.gap_after(noun_index).first() == Some(&'-') {
+        return;
+    }
+    // The noun: its singular lemma, and one gender in every entry. A noun that is its own plural
+    // ("Haus", "Mann") is singular after a determiner that has no plural reading.
+    let plural_too = matches!(
+        determiner.as_str(),
+        "den" | "hire" | "hiren" | "eise" | "eisen" | "äre" | "ären"
+    );
+    let noun_form = noun.form.as_str();
+    let entries = dictionary.entry_indices(noun.record);
+    let mut gender = None;
+    for &i in &entries {
+        let entry = &dictionary.entries[i];
+        let is_plural = entry.plural.split(", ").any(|p| p == noun_form);
+        // A name ("Park") or, after a singular determiner, the plural of another noun ("Jong" of
+        // "Jongt") is not what the phrase means.
+        if entry.part_of_speech == "NP" || !plural_too && is_plural && entry.lemma != noun_form {
+            continue;
+        }
+        if entry.part_of_speech != "SUBST"
+            || entry.lemma != noun_form
+            || (plural_too && is_plural)
+            || !matches!(entry.gender, "M" | "N")
+            || gender.is_some_and(|g| g != entry.gender)
+        {
+            return;
+        }
+        gender = Some(entry.gender);
+    }
+    let Some(gender) = gender else { return };
+    let ending = match (gender, masculine, neuter) {
+        ("M", true, _) => AdjectiveEnding::En,
+        ("N", _, Some(ending)) => ending,
+        _ => return,
+    };
+
+    // What each adjective should be, the last one first.
+    let mut fixes: Vec<AdjectiveFix> = Vec::new();
+    for (position, &word_index) in chain.iter().enumerate().rev() {
+        let last = position + 1 == chain.len();
+        let word = &words[word_index];
+        let form = word.form.as_str();
+        let entries = dictionary.entry_indices(word.record);
+        // Only an adjective in every entry, but for the last one, which may also be an adverb
+        // ("e ganz Dag" is "e ganzen Dag").
+        if !last
+            && !entries
+                .iter()
+                .all(|&i| matches!(dictionary.entries[i].part_of_speech, "ADJ" | "VRBPART"))
+        {
+            break;
+        }
+        let mut found: Option<(bool, String, StaticStr)> = None;
+        for &i in entries.iter().filter(|&&i| dictionary.entries[i].part_of_speech == "ADJ") {
+            let lemma = dictionary.entries[i].lemma;
+            let (en, t) = adjective_forms(dictionary, i);
+            let is_en = en.as_deref().is_some_and(|en| {
+                form == en || en.strip_suffix('n') == Some(form)
+            });
+            let is_t = t.as_deref() == Some(form);
+            let bare = form == lemma;
+            if !(bare || is_en || is_t) {
+                continue;
+            }
+            let wanted = match ending {
+                // The -t form reads the noun as neuter, which the LOD does too at times ("säi
+                // vegetatiivt Nervesystem"), and "super" and "sëlwer" go without an ending as
+                // well ("däi super Witz", "e sëlwer Couvert").
+                AdjectiveEnding::En if is_t || bare && matches!(lemma, "super" | "sëlwer") => None,
+                AdjectiveEnding::En => en,
+                AdjectiveEnding::T => Some(t.unwrap_or_else(|| lemma.to_string())),
+            };
+            let Some(wanted) = wanted else {
+                found = None;
+                break;
+            };
+            let right = match ending {
+                AdjectiveEnding::En => is_en,
+                AdjectiveEnding::T => form == wanted,
+            };
+            let reading = (bare, if right { String::new() } else { wanted }, lemma);
+            // Two adjectives of that spelling that disagree: no remark.
+            if found.as_ref().is_some_and(|f| *f != reading) {
+                found = None;
+                break;
+            }
+            found = Some(reading);
+        }
+        let Some((bare, wanted, lemma)) = found else { break };
+        if wanted.is_empty() {
+            // Right as written: an earlier adjective with no ending is then an adverb.
+            break;
+        }
+        // A wrong ending ("e klenge Haus") only on a word that is an adjective and nothing else:
+        // the LOD writes "en extraen Departement".
+        let lemma_entries = dictionary.entry_indices(dictionary.valid_record(lemma));
+        if !bare
+            && !lemma_entries
+                .iter()
+                .all(|&i| matches!(dictionary.entries[i].part_of_speech, "ADJ" | "VRBPART"))
+        {
+            break;
+        }
+        if !last {
+            // An earlier adjective: only one in -esch with no ending, when every later one had no
+            // ending either.
+            if !bare || !form.ends_with("esch") || fixes.iter().any(|fix| !fix.bare) {
+                break;
+            }
+        }
+        // The n-rule for the word after it ("italieeneschen" → "italieenesche" before "g").
+        let wanted = match wanted.strip_suffix('n') {
+            Some(short)
+                if ending == AdjectiveEnding::En
+                    && keeps_n_before(
+                        dictionary,
+                        &words[word_index + 1],
+                        &initial(&words[word_index + 1].normalized),
+                    ) == Some(false) =>
+            {
+                short.to_string()
+            }
+            _ => wanted,
+        };
+        fixes.push(AdjectiveFix {
+            index: word_index,
+            wanted,
+            bare,
+        });
+    }
+    if fixes.is_empty() {
+        return;
+    }
+    // The phrase as written and as it should be.
+    let mut fixed = String::new();
+    let mut position = words[index].start;
+    for fix in fixes.iter().rev() {
+        let word = &words[fix.index];
+        fixed.push_str(&analysis.slice(position, word.start));
+        fixed.push_str(&fix.wanted);
+        position = word.end;
+    }
+    fixed.push_str(&analysis.slice(position, noun.end));
+    let current = analysis.slice(words[index].start, noun.end);
+    let gender_code = if gender == "M" { "M" } else { "N" };
+    let dative = if ending == AdjectiveEnding::En && gender == "N" { "1" } else { "" };
+    for (k, fix) in fixes.iter().enumerate().rev() {
+        let word = &words[fix.index];
+        drop_n_rule(issues, fix.index);
+        issues.push(Issue::new(
+            fix.index,
+            if k == 0 { Severity::Warning } else { Severity::Info },
+            category::GENDER,
+            "adjective_ending",
+            params(&[
+                ("adjective", &word.text),
+                ("noun", &noun.text),
+                ("gender", gender_code),
+                ("dative", dative),
+                ("fixed", &fixed),
+                ("current", &current),
+            ]),
+            vec![fix.wanted.clone()],
+        ));
+    }
+}
+
 /// "ech" / "du" right before a verb whose form with its n is not that person's form:
 /// "ech brauche" is not "ech brauchen" (the LOD conjugates "ech brauch"), so the n rule
 /// has nothing to restore.
@@ -3684,6 +4004,7 @@ fn analyze_text(dictionary: &Dictionary, text: &str) -> String {
         check_ech_du_verb(&analysis, index, &mut issues);
     }
     for index in 0..words.len() {
+        check_adjective_ending(&analysis, index, &mut issues);
         check_pronoun_verb(&analysis, index, &mut issues);
         check_number_word(&analysis, index, &mut issues);
         check_ze_infinitive(&analysis, index, &mut issues);
